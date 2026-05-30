@@ -1,0 +1,32 @@
+# 환경변수 및 인증
+.env
+*.json
+!.env.example
+
+# 런타임 디렉토리 (내용만 무시, .gitkeep 유지)
+downloads/*
+!downloads/.gitkeep
+state/*
+!state/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# 참고용 레포 (읽기 전용 클론)
+reference/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 빌드
+dist/
+build/
+*.spec
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
