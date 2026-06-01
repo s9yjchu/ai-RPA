@@ -27,6 +27,9 @@ pyinstaller `
     --hidden-import src.notifier `
     --hidden-import src.daily_runner `
     --hidden-import src.monthly_runner `
+    --hidden-import src.log_report_scraper `
+    --hidden-import src.visual_report_scraper `
+    --hidden-import src.setup_gui `
     --hidden-import src.main `
     src\main.py
 

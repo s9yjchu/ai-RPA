@@ -98,60 +98,65 @@ ai-RPA/
 
 ---
 
-## 설치
+## 설치 및 초기 설정
 
-```powershell
-# 1. 가상환경 생성 및 활성화
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+### 일반 사용자 (비개발자)
 
-# 2. 패키지 설치
-pip install -r requirements.txt
+1. **`setup.bat` 더블클릭**
+   - 패키지 및 브라우저 자동 설치 (처음 실행 시 2~3분 소요)
+   - 설정 마법사 창이 열립니다
 
-# 3. Playwright 브라우저 설치
-python -m playwright install chromium
-```
+2. **설정 마법사에서 4가지 항목 설정**
+
+   | 항목 | 입력 내용 |
+   |---|---|
+   | SPC 로그인 정보 | SPC 사내 아이디·비밀번호 |
+   | Google 인증 | `credentials.json` 파일 선택 후 Google 로그인 |
+   | 이메일 알림 설정 | 발송자·수신자 Gmail 주소 |
+   | 자동 실행 등록 | 버튼 클릭 → Task Scheduler 자동 등록 |
+
+3. **완료** — 이후 매일 08:30에 자동으로 실행됩니다
+
+> **credentials.json** 은 `mkt_edm_rpa` 폴더에 있는 파일을 그대로 사용하거나,
+> IT 담당자에게 요청하세요.
 
 ---
 
-## 설정
-
-`.env.example` 을 복사해 `.env` 를 만들고 값을 채웁니다.
+<details>
+<summary>개발자용 상세 설정</summary>
 
 ```powershell
+# 수동 설치
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m playwright install chromium
+
+# .env 설정
 Copy-Item .env.example .env
 notepad .env
 ```
 
-| 항목 | 설명 |
+| 환경변수 | 설명 |
 |---|---|
-| `OLAP_ID` | SASHBI SSO 아이디 (LOG REPORT / VISUAL REPORT 에도 동일 사용) |
-| `OLAP_PW` | SASHBI SSO 비밀번호 |
-| `LOG_REPORT_URL` | LOG REPORT 시스템 URL (기본값 내장) |
-| `VISUAL_REPORT_URL` | VISUAL REPORT 시스템 URL (기본값 내장) |
-| `SHEETS_SPREADSHEET_ID` | Google Sheets 문서 ID (기본값 내장) |
-| `SHEETS_CREDENTIALS_PATH` | Google OAuth credentials.json 경로 |
-| `SHEETS_TOKEN_PATH` | OAuth 토큰 저장 경로 (최초 인증 후 자동 생성) |
-| `GMAIL_CREDENTIALS_PATH` | Gmail 발송용 credentials.json |
-| `REPORT_SENDER` | 발송자 Gmail 주소 |
-| `REPORT_RECIPIENTS` | 수신자 주소 (쉼표 구분) |
-| `HEADLESS` | `1` = 브라우저 숨김 (기본), `0` = 화면 표시 (튜닝 시) |
-| `DRY_RUN` | `1` = Sheets 쓰기·메일 생략 (테스트용) |
-
----
-
-## Google API 인증
-
-최초 1회만 브라우저 인증이 필요합니다. 이후 `token.json` 이 자동 갱신됩니다.
+| `OLAP_ID` / `OLAP_PW` | SASHBI SSO 로그인 |
+| `LOG_REPORT_URL` | LOG REPORT URL (기본값 내장) |
+| `VISUAL_REPORT_URL` | VISUAL REPORT URL (기본값 내장) |
+| `SHEETS_SPREADSHEET_ID` | Google Sheets ID (기본값 내장) |
+| `SHEETS_CREDENTIALS_PATH` | credentials.json 경로 |
+| `GMAIL_CREDENTIALS_PATH` | Gmail credentials.json 경로 |
+| `REPORT_SENDER` / `REPORT_RECIPIENTS` | 이메일 발송·수신 주소 |
+| `HEADLESS` | `0` = 브라우저 표시 (튜닝 시) |
+| `DRY_RUN` | `1` = 쓰기·메일 생략 (테스트) |
 
 ```powershell
-# credentials.json 을 프로젝트 루트에 복사한 뒤 실행
-python -m src.main daily --date 2026-01-01   # 아무 날짜로 시범 실행
-# → 브라우저 창에서 Google 계정 로그인 → token.json 자동 저장
+# 수동 실행
+python -m src.main daily
+python -m src.main daily --date 2026-05-29 --force
+python -m src.main monthly --year 2025 --month 5 --force
 ```
 
-`credentials.json` 은 `mkt_edm_rpa` 의 OAuth Desktop 자격증명과 동일 파일을 사용할 수 있습니다.
-Scopes 에 `spreadsheets` + `gmail.send` 가 모두 포함되어야 합니다.
+</details>
 
 ---
 
@@ -159,51 +164,16 @@ Scopes 에 `spreadsheets` + `gmail.send` 가 모두 포함되어야 합니다.
 
 ### 수동 실행
 
-```powershell
-# 어제 날짜 일별 업데이트
-python -m src.main daily
+`run_rpa.bat` 을 더블클릭하거나 설정 마법사의 **[지금 실행]** 버튼을 클릭합니다.
 
-# 특정 날짜 재실행
-python -m src.main daily --date 2026-05-29
+### 자동 실행 (Task Scheduler)
 
-# 이미 완료된 날짜 강제 재실행
-python -m src.main daily --date 2026-05-29 --force
+`setup.bat` → 설정 마법사 → **[자동 실행 등록]** 버튼으로 자동 등록됩니다.
 
-# 이번 달 월별 업데이트
-python -m src.main monthly
-
-# 특정 연월 재실행
-python -m src.main monthly --year 2025 --month 5 --force
-
-# 화면 표시 + 쓰기 없이 (셀렉터 튜닝 시)
-# .env 에서 HEADLESS=0, DRY_RUN=1 로 설정 후 실행
-python -m src.main daily
-python -m src.main monthly --year 2025 --month 5 --force
-```
-
-### Windows Task Scheduler 설정
-
-**일별**
-
-| 항목 | 값 |
+| 스케줄 | 실행 조건 |
 |---|---|
-| 프로그램 | `C:\Users\S9_User\projects\ai-RPA\run_rpa.bat` |
-| 인수 | `daily` |
-| 시작 위치 | `C:\Users\S9_User\projects\ai-RPA` |
-| 트리거 | 매일 08:30 |
-| 반복 | 30분마다, 3시간 동안 |
-| 실행 시간 초과 | 10분 |
-
-**월별**
-
-| 항목 | 값 |
-|---|---|
-| 프로그램 | `C:\Users\S9_User\projects\ai-RPA\run_rpa.bat` |
-| 인수 | `monthly` |
-| 시작 위치 | `C:\Users\S9_User\projects\ai-RPA` |
-| 트리거 | 매월 1일 08:30 |
-| 반복 | 30분마다, 4일 동안 |
-| 실행 시간 초과 | 15분 (VISUAL REPORT 로딩 최대 6분 포함) |
+| 일별 | 매일 08:30, 30분 간격, 3시간 동안 |
+| 월별 | 매월 1일 08:30, 30분 간격, 4일 동안 |
 
 ---
 
