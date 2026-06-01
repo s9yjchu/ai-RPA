@@ -21,6 +21,7 @@ from typing import Optional
 from playwright.sync_api import Page, TimeoutError as PwTimeout
 
 from .browser import BrowserSession
+from . import hub_login
 
 log = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
@@ -93,22 +94,16 @@ def yesterday_kst() -> date:
 
 # ── 로그인 ────────────────────────────────────────────────────────────
 
-def login(page: Page, base_url: str, user_id: str, password: str, session: BrowserSession) -> None:
-    log.info("[STEP] OLAP 로그인 페이지 접속")
-    page.goto(base_url, wait_until="domcontentloaded", timeout=30_000)
-    session.snapshot(page, "01_login_page")
+def login(page: Page, config, session: BrowserSession) -> Page:
+    """SPC Hub SSO 로그인 후 OLAP 으로 이동합니다.
 
-    try:
-        page.locator(SEL_LOGIN_ID).first.fill(user_id, timeout=10_000)
-        page.locator(SEL_LOGIN_PW).first.fill(password, timeout=5_000)
-        page.locator(SEL_LOGIN_BTN).first.click(timeout=5_000)
-        # 로그인 후 메인 화면 로딩 대기
-        page.wait_for_load_state("networkidle", timeout=30_000)
-        log.info("  로그인 완료")
-        session.snapshot(page, "02_after_login")
-    except PwTimeout as exc:
-        session.snapshot(page, "02_login_timeout")
-        raise RuntimeError(f"로그인 실패 (셀렉터 확인 필요): {exc}") from exc
+    OLAP 이 새 탭으로 열리는 경우 해당 탭의 Page 를 반환합니다.
+    caller 는 반환된 Page 를 이후 작업에 사용해야 합니다.
+    """
+    hub_login.login_to_hub(page, config, session)
+    active = hub_login.navigate_to_olap(page, config, session)
+    log.info("  OLAP 진입 완료")
+    return active
 
 
 # ── 리포트 트리 탐색 ─────────────────────────────────────────────────

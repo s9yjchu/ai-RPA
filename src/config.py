@@ -24,10 +24,15 @@ def _get_bool(name: str, default: bool = False) -> bool:
 
 
 @dataclass(frozen=True)
-class OlapConfig:
+class HubConfig:
     base_url: str
     user_id: str
     password: str
+
+
+@dataclass(frozen=True)
+class OlapConfig:
+    base_url: str
 
 
 @dataclass(frozen=True)
@@ -66,6 +71,7 @@ class VisualReportConfig:
 
 @dataclass(frozen=True)
 class Config:
+    hub: HubConfig
     olap: OlapConfig
     log_report: LogReportConfig
     visual_report: VisualReportConfig
@@ -78,6 +84,21 @@ def load_config() -> Config:
     recipients_raw = _get("REPORT_RECIPIENTS")
 
     return Config(
+        hub=HubConfig(
+            base_url=_get(
+                "SPCHUB_BASE_URL",
+                "https://hub.spc.co.kr/ekp/view/login/userLogin",
+            ),
+            user_id=_get("SPCHUB_ID", required=True),
+            password=_get("SPCHUB_PW", required=True),
+        ),
+        olap=OlapConfig(
+            base_url=_get(
+                "OLAP_BASE_URL",
+                "https://dwweb.spc.co.kr:7980/SASHBI/main.jsp"
+                "?board=/01.%20SPC/01.%20OLAP/100.NEW_REPORT",
+            ),
+        ),
         log_report=LogReportConfig(
             base_url=_get(
                 "LOG_REPORT_URL",
@@ -89,15 +110,6 @@ def load_config() -> Config:
                 "VISUAL_REPORT_URL",
                 "https://va.spc.co.kr/SASReportViewer/",
             ),
-        ),
-        olap=OlapConfig(
-            base_url=_get(
-                "OLAP_BASE_URL",
-                "https://dwweb.spc.co.kr:7980/SASHBI/main.jsp"
-                "?board=/01.%20SPC/01.%20OLAP/100.NEW_REPORT",
-            ),
-            user_id=_get("OLAP_ID", required=True),
-            password=_get("OLAP_PW", required=True),
         ),
         sheets=SheetsConfig(
             spreadsheet_id=_get(

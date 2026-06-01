@@ -23,6 +23,7 @@ from playwright.sync_api import Page, TimeoutError as PwTimeout
 
 from .browser import BrowserSession
 from .config import Config
+from . import hub_login
 
 log = logging.getLogger(__name__)
 
@@ -79,7 +80,8 @@ def scrape_mau_excel(config: Config, year: int, month: int) -> Path:
         debug_dir=debug_dir,
     ) as session:
         page = session.new_page()
-        _login(page, config.visual_report.base_url, config.olap.user_id, config.olap.password, session)
+        hub_login.login_to_hub(page, config, session)
+        page = hub_login.navigate_to_visual_report(page, config, session)
         _open_happyapp_report(page, session)
         _clear_date_filter(page, session)
         return _export_mau_excel(page, dl_dir, session)

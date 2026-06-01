@@ -82,7 +82,7 @@ def check_packages() -> bool:
 
 def check_spc_login() -> bool:
     env = _read_env()
-    return bool(env.get("OLAP_ID")) and bool(env.get("OLAP_PW"))
+    return bool(env.get("SPCHUB_ID")) and bool(env.get("SPCHUB_PW"))
 
 
 def check_google_auth() -> bool:
@@ -238,18 +238,18 @@ class SetupApp:
         env = _read_env()
 
         Label(dlg, text="SPC 아이디:", font=("맑은 고딕", 10)).place(x=20, y=30)
-        id_var = StringVar(value=env.get("OLAP_ID", ""))
+        id_var = StringVar(value=env.get("SPCHUB_ID", ""))
         Entry(dlg, textvariable=id_var, width=24, font=("맑은 고딕", 10)).place(x=110, y=28)
 
         Label(dlg, text="비밀번호:", font=("맑은 고딕", 10)).place(x=20, y=70)
-        pw_var = StringVar(value=env.get("OLAP_PW", ""))
+        pw_var = StringVar(value=env.get("SPCHUB_PW", ""))
         Entry(dlg, textvariable=pw_var, show="●", width=24, font=("맑은 고딕", 10)).place(x=110, y=68)
 
         def save():
             if not id_var.get().strip() or not pw_var.get().strip():
                 messagebox.showwarning("입력 오류", "아이디와 비밀번호를 모두 입력하세요.", parent=dlg)
                 return
-            _write_env({"OLAP_ID": id_var.get().strip(), "OLAP_PW": pw_var.get().strip()})
+            _write_env({"SPCHUB_ID": id_var.get().strip(), "SPCHUB_PW": pw_var.get().strip()})
             dlg.destroy()
             self.refresh_status()
 

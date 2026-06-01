@@ -21,6 +21,7 @@ from playwright.sync_api import Page, TimeoutError as PwTimeout
 from .browser import BrowserSession
 from .config import Config
 from .olap_scraper import DataNotReadyError
+from . import hub_login
 
 log = logging.getLogger(__name__)
 
@@ -79,7 +80,8 @@ def scrape_login_count(config: Config, year: int, month: int) -> int:
         debug_dir=debug_dir,
     ) as session:
         page = session.new_page()
-        _login(page, config.log_report.base_url, config.olap.user_id, config.olap.password, session)
+        hub_login.login_to_hub(page, config, session)
+        page = hub_login.navigate_to_log_report(page, config, session)
         _navigate_to_trend(page, session)
         _switch_to_monthly(page, session)
         _select_month(page, year, month, session)

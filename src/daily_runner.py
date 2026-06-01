@@ -113,7 +113,7 @@ def _download_all(
         debug_dir=debug_dir,
     ) as session:
         page = session.new_page()
-        login(page, config.olap.base_url, config.olap.user_id, config.olap.password, session)
+        page = login(page, config, session)  # may return new tab if OLAP opens in popup
 
         member_file = scrape_report(page, "member_metrics", target_date, dl_dir, session)
         state.mark_source_done("member_metrics")
