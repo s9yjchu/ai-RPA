@@ -19,6 +19,7 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 # ── 대상 시트 이름 ────────────────────────────────────────────────────
 SHEET_HPC_DAILY   = "HPC 실적 (일별)"
 SHEET_STORE_DAILY = "전사 매장실적 (일별)"
+SHEET_HPC_MONTHLY = "HPC 실적 (월별)"
 
 # ── 컬럼 인덱스 (1-based, A=1) ────────────────────────────────────────
 # HPC 실적 (일별)
@@ -49,6 +50,12 @@ STORE_COLS: dict[str, int] = {
     "HPC 사용건수": 12,
     # 13 = HPC 가입수 (비대상)
     "APP 제시건수": 14,
+}
+
+# HPC 실적 (월별) — 월별 업데이트 대상 컬럼 (col O=15, col P=16)
+HPC_MONTHLY_COLS: dict[str, int] = {
+    "해피앱 월 로그인객수": 15,  # col O ← LOG REPORT 순 로그인 회원수
+    "해피앱 MAU":          16,  # col P ← VISUAL REPORT MAU 당월
 }
 
 KR_DOW = ["월", "화", "수", "목", "금", "토", "일"]  # Monday=0
@@ -223,3 +230,45 @@ def write_store_daily(
             {"valueInputOption": "RAW", "data": batch}
         )
     log.info(f"  [SHEETS] 전사 매장실적 (일별) row={row} 업데이트 완료")
+
+
+# ── 월별 시트 ─────────────────────────────────────────────────────────
+
+def _find_row_by_month(ws: gspread.Worksheet, year: int, month: int) -> int | None:
+    """col A (YYYYMM 형식) 에서 연월과 일치하는 1-based 행 번호 반환."""
+    target = f"{year}{month:02d}"
+    col_a = ws.col_values(1)
+    for i, cell in enumerate(col_a):
+        if str(cell).strip() == target:
+            return i + 1
+    return None
+
+
+def write_hpc_monthly(
+    spreadsheet: gspread.Spreadsheet,
+    year: int,
+    month: int,
+    metrics: dict[str, Any],
+    dry_run: bool = False,
+) -> None:
+    """HPC 실적 (월별) 시트에 월별 지표를 씁니다.
+
+    월별 행은 staff 가 수동으로 관리하므로, 행이 없으면 ValueError 를 발생시킵니다.
+    """
+    ws = spreadsheet.worksheet(SHEET_HPC_MONTHLY)
+    row = _find_row_by_month(ws, year, month)
+    if row is None:
+        raise ValueError(
+            f"[SHEETS] {year}-{month:02d} 행을 찾을 수 없음 (col A YYYYMM 형식 확인 필요)"
+        )
+    batch = _build_batch(row, metrics, HPC_MONTHLY_COLS)
+
+    if dry_run:
+        log.info(f"  [DRY_RUN] HPC 월별 — 쓰기 생략: {batch}")
+        return
+
+    if batch:
+        spreadsheet.values_batch_update(
+            {"valueInputOption": "RAW", "data": batch}
+        )
+    log.info(f"  [SHEETS] HPC 실적 (월별) row={row} 업데이트 완료")

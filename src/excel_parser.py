@@ -286,6 +286,21 @@ def parse_closing_report(path: Path) -> dict[str, Any]:
     return result
 
 
+# ── VISUAL REPORT MAU 파서 ───────────────────────────────────────────
+
+def parse_mau_excel(path: Path) -> int:
+    """VISUAL REPORT MAU 당월 Excel → A2 셀 정수값 반환."""
+    log.info(f"[PARSE] MAU Excel 파싱: {path.name}")
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb.active or wb[wb.sheetnames[0]]
+    val = ws.cell(row=2, column=1).value
+    if val is None:
+        raise ValueError(f"MAU Excel A2 셀이 비어 있습니다 (파일: {path.name})")
+    result = int(float(str(val).replace(",", "").strip()))
+    log.info(f"  MAU 당월: {result:,}")
+    return result
+
+
 # ── CLI 디버그 모드 ───────────────────────────────────────────────────
 
 if __name__ == "__main__":

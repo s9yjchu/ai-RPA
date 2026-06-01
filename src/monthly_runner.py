@@ -1,23 +1,29 @@
-"""월별 고객지표 업데이트 — LOG REPORT / VISUAL REPORT.
-
-[미구현 — 추후 완성 예정]
-
-완성에 필요한 정보:
-  - LOG REPORT > 해피앱 > 종합 > 누적추이 > 월별 보기: 순 로그인 회원수 추출 방법
-  - VISUAL REPORT > 해피앱 DAU 리포트 > 해피앱 접속현황: MAU Excel 파일 구조
-"""
+"""월별 고객지표 업데이트 — LOG REPORT(로그인객수) + VISUAL REPORT(MAU)."""
 
 from __future__ import annotations
 
 import logging
-from datetime import date
+
 from .config import Config
+from .excel_parser import parse_mau_excel
+from .log_report_scraper import scrape_login_count
+from .notifier import notify_data_not_ready, notify_failure, notify_success
+from .olap_scraper import DataNotReadyError
+from .sheets_writer import open_spreadsheet, write_hpc_monthly
 from .state_manager import MonthlyState
+from .visual_report_scraper import scrape_mau_excel
 
 log = logging.getLogger(__name__)
 
 
 def run_monthly(config: Config, year: int, month: int, force: bool = False) -> None:
+    """
+    지정 연월의 월별 지표를 수집하여 Google Sheets "HPC 실적 (월별)" 시트를 업데이트합니다.
+
+    - 이미 성공한 월이면 건너뜁니다 (force=True 로 강제 재실행 가능).
+    - 데이터 미준비(DataNotReadyError) 시 알림 발송 후 종료 → 다음 실행에서 재시도.
+    - 재시도 기간 초과 시 최종 실패 처리.
+    """
     state = MonthlyState(config.runtime.state_dir, year, month)
 
     if state.is_done and not force:
@@ -28,8 +34,87 @@ def run_monthly(config: Config, year: int, month: int, force: bool = False) -> N
         log.error(f"[ABORT] {year}-{month:02d} 최대 재시도 기간 초과 — 수동 확인 필요")
         return
 
-    log.warning(
-        "[TODO] 월별 업데이트 미구현.\n"
-        "LOG REPORT 및 VISUAL REPORT 데이터 추출 방법 확인 후 구현 예정."
-    )
-    raise NotImplementedError("월별 업데이트는 아직 구현되지 않았습니다.")
+    log.info(f"[START] 월별 업데이트 시작: {year}-{month:02d} (시도 #{state.attempts + 1})")
+    state.record_attempt()
+
+    try:
+        # ── Step 1: LOG REPORT → 순 로그인 회원수 ──────────────────────
+        log.info("[STEP] LOG REPORT 스크래핑")
+        login_count = scrape_login_count(config, year, month)
+        state.mark_source_done("log_report")
+
+        # ── Step 2: VISUAL REPORT → MAU 당월 Excel → A2 값 ────────────
+        log.info("[STEP] VISUAL REPORT 스크래핑")
+        mau_path = scrape_mau_excel(config, year, month)
+        mau_value = parse_mau_excel(mau_path)
+        state.mark_source_done("visual_report")
+
+        # ── Step 3: Google Sheets 쓰기 ─────────────────────────────────
+        log.info("[STEP] Google Sheets 업데이트")
+        spreadsheet = open_spreadsheet(
+            config.sheets.credentials_path,
+            config.sheets.token_path,
+            config.sheets.spreadsheet_id,
+        )
+        write_hpc_monthly(
+            spreadsheet,
+            year,
+            month,
+            {
+                "해피앱 월 로그인객수": login_count,
+                "해피앱 MAU": mau_value,
+            },
+            dry_run=config.runtime.dry_run,
+        )
+        state.mark_sheet_written("HPC 실적 (월별)")
+
+        state.mark_success()
+
+        if not config.runtime.dry_run:
+            notify_success(
+                config.notify.gmail_credentials_path,
+                config.notify.gmail_token_path,
+                config.notify.report_sender,
+                config.notify.report_recipients,
+                _month_label(year, month),
+                {
+                    "해피앱 월 로그인객수": login_count,
+                    "해피앱 MAU": mau_value,
+                },
+            )
+
+        log.info(f"[DONE] {year}-{month:02d} 월별 업데이트 완료")
+
+    except DataNotReadyError as exc:
+        log.warning(f"[WAIT] {exc}")
+        notify_data_not_ready(
+            config.notify.gmail_credentials_path,
+            config.notify.gmail_token_path,
+            config.notify.report_sender,
+            config.notify.report_recipients,
+            _month_label(year, month),
+            state.attempts,
+        )
+        # 상태를 failed 로 전환하지 않음 — 다음 실행에서 재시도
+
+    except Exception as exc:
+        reason = str(exc)
+        log.error(f"[FAIL] {year}-{month:02d} 오류: {reason}", exc_info=True)
+        state.mark_failed(reason)
+        if state.should_give_up():
+            notify_failure(
+                config.notify.gmail_credentials_path,
+                config.notify.gmail_token_path,
+                config.notify.report_sender,
+                config.notify.report_recipients,
+                _month_label(year, month),
+                reason,
+                state.attempts,
+            )
+        raise
+
+
+def _month_label(year: int, month: int):
+    """notifier 의 date 인자 자리에 넘길 표현값 (문자열 형태)."""
+    from datetime import date
+    return date(year, month, 1)

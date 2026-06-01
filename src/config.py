@@ -55,8 +55,20 @@ class RuntimeConfig:
 
 
 @dataclass(frozen=True)
+class LogReportConfig:
+    base_url: str
+
+
+@dataclass(frozen=True)
+class VisualReportConfig:
+    base_url: str
+
+
+@dataclass(frozen=True)
 class Config:
     olap: OlapConfig
+    log_report: LogReportConfig
+    visual_report: VisualReportConfig
     sheets: SheetsConfig
     notify: NotifyConfig
     runtime: RuntimeConfig
@@ -66,6 +78,18 @@ def load_config() -> Config:
     recipients_raw = _get("REPORT_RECIPIENTS")
 
     return Config(
+        log_report=LogReportConfig(
+            base_url=_get(
+                "LOG_REPORT_URL",
+                "https://hplog.spc.co.kr:8000/datastory/home",
+            ),
+        ),
+        visual_report=VisualReportConfig(
+            base_url=_get(
+                "VISUAL_REPORT_URL",
+                "https://va.spc.co.kr/SASReportViewer/",
+            ),
+        ),
         olap=OlapConfig(
             base_url=_get(
                 "OLAP_BASE_URL",
