@@ -16,11 +16,14 @@ def setup_logging(logs_dir: Path) -> Path:
 
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+        format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
             logging.FileHandler(log_file, encoding="utf-8"),
-            logging.StreamHandler(sys.stdout),
+            logging.StreamHandler(
+                open(sys.stdout.fileno(), mode="w", encoding="utf-8", closefd=False)
+                if hasattr(sys.stdout, "fileno") else sys.stdout
+            ),
         ],
     )
     return log_file

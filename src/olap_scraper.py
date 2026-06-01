@@ -26,44 +26,42 @@ from . import hub_login
 log = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
 
-# ── 셀렉터 상수 (실제 DOM 확인 후 수정) ──────────────────────────────
-# 로그인 페이지
-SEL_LOGIN_ID = "input[name='userId'], input[name='id'], input#userId, input#id"
-SEL_LOGIN_PW = "input[name='password'], input[name='passwd'], input#password, input#passwd"
-SEL_LOGIN_BTN = "button[type='submit'], input[type='submit'], button:has-text('로그인'), a:has-text('로그인')"
+# ── 셀렉터 상수 (DOM 확인 완료) ─────────────────────────────────────
+# OLAP 리포트 탐색 — 3단계 구조 (DOM 확인 완료)
+#   1단계 탭:      a.ui-tabs-anchor              (전사, 정형데이터)
+#   2단계 아코디언: h3.ui-accordion-header        (마감리포트, 회원분석, …)
+#   3단계 리포트:  span.STPRVmenuItem a           (실제 리포트 링크)
+SEL_TREE_NODE = (
+    "a.ui-tabs-anchor:has-text('{label}'), "
+    "h3.ui-accordion-header:has-text('{label}'), "
+    "span.STPRVmenuItem a:has-text('{label}')"
+)
 
-# 리포트 트리 (좌측 탐색 패널)
-# SAS BI 트리 노드는 보통 data-* 속성이나 title 속성으로 식별
-SEL_TREE_NODE = "span[title='{label}'], li[title='{label}'], a[title='{label}']"
-
-# 날짜 필터 영역 — SAS WRS 기본 패턴
+# 날짜 필터 — iFrame 내 id 확인 완료 (StoredProcess HBI 리포트별 패턴 상이)
+# member_metrics:   sltdate_start / sltdate_end
+# channel_metrics:  sltPERIOD_start / sltPERIOD_end
 SEL_DATE_START = (
-    "input[name='startDate'], input[id*='startDate'], input[placeholder*='시작']"
+    "input#sltdate_start, input#sltPERIOD_start, "
+    "input[id*='date_start'], input[id*='PERIOD_start'], input[id*='Date_start']"
 )
 SEL_DATE_END = (
-    "input[name='endDate'], input[id*='endDate'], input[placeholder*='종료'], input[placeholder*='끝']"
+    "input#sltdate_end, input#sltPERIOD_end, "
+    "input[id*='date_end'], input[id*='PERIOD_end'], input[id*='Date_end']"
 )
-# 날짜 입력 방식 A: input에 직접 타이핑
-# 날짜 입력 방식 B: 캘린더 위젯 (open_calendar → click day)
-SEL_CALENDAR_OPEN = "button[aria-label*='날짜'], img[src*='cal'], button[class*='cal']"
-SEL_CALENDAR_DAY = "td[data-day='{day}']:not(.disabled), button[data-day='{day}']:not(.disabled)"
-SEL_CALENDAR_YESTERDAY_BTN = "button:has-text('어제'), td:has-text('{day}')"
+# jQuery UI datepicker — input에 직접 타이핑. 캘린더 위젯은 불필요.
+SEL_CALENDAR_OPEN = "button.ui-datepicker-trigger, img.ui-datepicker-trigger"
+SEL_CALENDAR_DAY = "td[data-handler='selectDay'] a:has-text('{day}')"
 
-# 실행/조회 버튼
-SEL_RUN_BTN = (
-    "button:has-text('실행'), button:has-text('조회'), button:has-text('검색'), "
-    "input[value='실행'], input[value='조회']"
-)
+# 실행 버튼 — iFrame 내 id 확인 완료 (input#btnRun, value="Submit")
+SEL_RUN_BTN = "input#btnRun, input[value='Submit'], input[id*='Run'][type='button']"
 
-# 다운로드 — SAS WRS 는 toolbar 메뉴 클릭 후 서브메뉴에서 Excel 선택하는 경우가 많음
-SEL_EXPORT_BTN = (
-    "button[title*='내보내기'], button[title*='Export'], button[aria-label*='다운로드'], "
-    "a:has-text('다운로드'), button:has-text('다운로드'), span:has-text('내보내기')"
-)
-SEL_EXPORT_EXCEL = (
-    "li:has-text('Excel'), a:has-text('Excel'), button:has-text('Excel'), "
-    "li:has-text('엑셀'), a:has-text('엑셀')"
-)
+# Excel 내보내기
+# HBI StoredProcess: input#btnExcel (직접 클릭, 서브메뉴 없음)
+# SAS WRS: button#citationFileButton (파일 메뉴) → "내보내기..." 클릭
+SEL_EXPORT_BTN      = "input#btnExcel, input[value='엑셀'], input[id*='Excel'][type='button']"
+SEL_EXPORT_EXCEL    = SEL_EXPORT_BTN  # HBI: 동일 버튼
+SEL_WRS_FILE_MENU   = "button#citationFileButton"                # WRS 파일(F) 메뉴 버튼
+SEL_WRS_EXPORT_ITEM = "li:has-text('내보내기'), a:has-text('내보내기')"  # 메뉴 항목
 
 # 리포트 이름 경로 (트리 클릭 순서)
 REPORT_PATHS = {
@@ -74,6 +72,7 @@ REPORT_PATHS = {
     ],
     "channel_metrics": [
         "정형데이터",
+        "회원분석",                              # 채널별 보고서는 회원분석 아코디언 안에 있음
         "[HPC] 채널별 적립, 사용건수 현황",
     ],
     "closing_report": [
@@ -83,9 +82,12 @@ REPORT_PATHS = {
     ],
 }
 
-# iFrame 이름/ID 힌트 — SAS WRS 가 iFrame을 사용할 경우 아래를 설정
-# None 이면 iFrame 없이 메인 페이지에서 조작
-REPORT_FRAME_SELECTOR: Optional[str] = "iframe#reportFrame, iframe[name='reportFrame']"
+# 리포트 콘텐츠 iFrame — aria-hidden='false' 인 활성 탭 패널 내의 iFrame 만 선택
+# (비활성 탭에도 frmSASHBI iFrame이 있으므로 전체 매칭 시 잘못된 iFrame 선택 가능)
+REPORT_FRAME_SELECTOR: Optional[str] = (
+    "div[aria-hidden='false'] iframe[name^='frmSASHBI'], "
+    "div[role='tabpanel'][aria-hidden='false'] iframe[name^='frmSASHBI']"
+)
 
 
 def yesterday_kst() -> date:
@@ -126,16 +128,14 @@ def navigate_to_report(page: Page, report_key: str, session: BrowserSession) -> 
     path = REPORT_PATHS[report_key]
     log.info(f"[STEP] 리포트 탐색: {' > '.join(path)}")
 
-    target = _get_active_page(page)
+    # 탐색은 항상 메인 페이지에서 (iFrame 내부가 아님)
+    target = page
 
     for i, label in enumerate(path):
         sel = SEL_TREE_NODE.format(label=label)
         try:
             node = target.locator(sel).first
             node.wait_for(state="visible", timeout=10_000)
-            node.click()
-            time.sleep(0.8)  # 트리 확장 애니메이션 대기
-            log.info(f"  클릭: {label}")
         except PwTimeout:
             session.snapshot(page, f"tree_fail_{i}_{label[:20]}")
             raise RuntimeError(
@@ -143,10 +143,28 @@ def navigate_to_report(page: Page, report_key: str, session: BrowserSession) -> 
                 f"logs/debug/ 스크린샷을 확인해 SEL_TREE_NODE 셀렉터를 수정하세요."
             )
 
-    # 리포트 로딩 대기
-    page.wait_for_load_state("networkidle", timeout=30_000)
+        # 마지막 노드가 아닐 때: 다음 노드가 이미 보이면 클릭 생략 (아코디언 중복 토글 방지)
+        if i < len(path) - 1:
+            next_sel = SEL_TREE_NODE.format(label=path[i + 1])
+            try:
+                target.locator(next_sel).first.wait_for(state="visible", timeout=1_500)
+                log.info(f"  건너뜀 (이미 펼쳐짐): {label}")
+                continue
+            except PwTimeout:
+                pass  # 다음 노드 안 보임 → 클릭해서 펼침
+
+        node.click()
+        time.sleep(1.0)  # 탭/아코디언 애니메이션 대기
+        log.info(f"  클릭: {label}")
+
+    # 리포트 폼 로딩 대기 — Submit 버튼이 보일 때까지 (networkidle 은 AJAX로 인해 비사용)
+    try:
+        _get_active_page(page).locator(SEL_RUN_BTN).first.wait_for(state="visible", timeout=15_000)
+        log.info("  리포트 폼 로딩 완료")
+    except PwTimeout:
+        time.sleep(3)
+        log.info("  리포트 폼 대기 완료 (타임아웃 후 진행)")
     session.snapshot(page, f"03_report_loaded_{report_key}")
-    log.info("  리포트 로딩 완료")
 
 
 # ── 날짜 필터 ─────────────────────────────────────────────────────────
@@ -164,7 +182,8 @@ def _fill_date_input(target: Page, selector: str, target_date: date) -> bool:
         inp = target.locator(selector).first
         inp.wait_for(state="visible", timeout=5_000)
         for fmt in alt_formats:
-            inp.triple_click()
+            inp.click()           # 포커스
+            inp.press("Control+a")
             inp.fill(fmt)
             inp.press("Tab")
             time.sleep(0.3)
@@ -221,27 +240,59 @@ def click_run(page: Page, session: BrowserSession) -> None:
     target = _get_active_page(page)
     try:
         target.locator(SEL_RUN_BTN).first.click(timeout=10_000)
-        page.wait_for_load_state("networkidle", timeout=60_000)
-        log.info("  조회 완료")
+        log.info("  조회 버튼 클릭 완료 — 결과 대기 중")
+
+        # StoredProcess HBI: #progressIndicatorWIP 가 사라지면 조회 완료
+        try:
+            target.locator("#progressIndicatorWIP").wait_for(state="hidden", timeout=120_000)
+            log.info("  조회 완료 (progressIndicator 숨김)")
+        except PwTimeout:
+            time.sleep(3)
+            log.info("  조회 완료 (타임아웃 후 진행)")
+
         session.snapshot(page, "05_after_run")
-    except PwTimeout as exc:
-        session.snapshot(page, "05_run_timeout")
-        raise RuntimeError(
-            f"조회 버튼 클릭 실패: {exc}\n"
-            "SEL_RUN_BTN 셀렉터를 확인하세요."
-        ) from exc
+
+    except PwTimeout:
+        # SAS WRS 리포트 등 Submit 버튼 없이 자동 렌더링되는 경우
+        log.info("  조회 버튼 없음 — SAS WRS 자동 로드 리포트로 간주, 대기 중")
+        time.sleep(5)  # WRS 리포트 렌더링 대기
+        session.snapshot(page, "05_wrs_auto_loaded")
 
 
 def _verify_report_date(page: Page, target_date: date) -> bool:
-    """리포트 본문에 어제 날짜가 포함되어 있는지 확인 (데이터 준비 여부 체크)."""
+    """리포트 본문(iFrame 포함)에 어제 날짜가 포함되어 있는지 확인."""
     date_str = target_date.strftime("%Y-%m-%d")
-    alt = target_date.strftime("%Y/%m/%d")
-    content = page.content()
-    if date_str in content or alt in content:
+    alt      = target_date.strftime("%Y/%m/%d")
+    yyyymmdd = target_date.strftime("%Y%m%d")
+
+    def _has_date(text: str) -> bool:
+        return date_str in text or alt in text or yyyymmdd in text
+
+    # 외부 페이지 확인
+    if _has_date(page.content()):
         return True
-    # YYYYMMDD 형식도 확인
-    if target_date.strftime("%Y%m%d") in content:
-        return True
+
+    # iFrame 내용 확인 (리포트 결과는 frmSASHBI iFrame 안에 있음)
+    try:
+        for frame in page.frames:
+            if "frmSASHBI" in (frame.name or ""):
+                if _has_date(frame.content()):
+                    return True
+    except Exception:
+        pass
+
+    # dvData 에 테이블이 있으면 데이터 준비됨으로 간주 (날짜가 숨겨진 경우 대비)
+    try:
+        active = _get_active_page(page)
+        dv = active.locator("#dvData table")
+        dv.first.wait_for(state="visible", timeout=2_000)
+        cell_count = dv.first.locator("td").count()
+        if cell_count > 0:
+            log.info(f"  dvData 테이블 존재 ({cell_count}개 셀) → 데이터 준비됨으로 간주")
+            return True
+    except Exception:
+        pass
+
     log.warning(f"  리포트에서 날짜 {date_str} 미확인 — 데이터가 준비 중일 수 있습니다.")
     return False
 
@@ -256,13 +307,51 @@ def download_excel(
     log.info(f"[STEP] Excel 다운로드: {report_key}")
     target = _get_active_page(page)
 
+    # HBI 방식: input#btnExcel 직접 클릭
+    hbi_btn = target.locator(SEL_EXPORT_BTN).first
     try:
-        # 내보내기 버튼 클릭 → 서브메뉴 표시
-        target.locator(SEL_EXPORT_BTN).first.click(timeout=10_000)
-        time.sleep(0.5)
-        # Excel 옵션 선택
+        hbi_btn.wait_for(state="visible", timeout=5_000)
+        hbi_found = True
+    except PwTimeout:
+        hbi_found = False
+
+    if hbi_found:
+        try:
+            with page.expect_download(timeout=120_000) as dl_info:
+                hbi_btn.click(timeout=5_000)
+            dl = dl_info.value
+            save_path = download_dir / f"{report_key}_{dl.suggested_filename}"
+            dl.save_as(save_path)
+            log.info(f"  저장 완료: {save_path}")
+            session.snapshot(page, f"06_downloaded_{report_key}")
+            return save_path
+        except Exception as exc:
+            session.snapshot(page, f"06_hbi_download_fail_{report_key}")
+            raise RuntimeError(f"HBI Excel 다운로드 실패 ({report_key}): {exc}") from exc
+
+    # WRS 방식: cwMenuBarExport() JS 직접 호출 → exportReport.do 이동 → 다운로드
+    # (툴바가 embedded 모드에서 숨겨져 있으므로 JS 직접 호출)
+    log.info("  HBI 버튼 없음 → SAS WRS cwMenuBarExport() 직접 호출")
+    try:
+        # page.frames 에서 frmSASHBI* 이름의 활성 프레임 탐색
+        wrs_frame = None
+        for f in page.frames:
+            if "frmSASHBI" in (f.name or "") and "AA00012A" in (f.name or ""):
+                wrs_frame = f
+                break
+        if wrs_frame is None:
+            for f in page.frames:
+                if "frmSASHBI" in (f.name or ""):
+                    wrs_frame = f
+                    break
+
+        if wrs_frame is None:
+            raise RuntimeError("WRS iFrame을 찾을 수 없습니다.")
+
+        log.info(f"  WRS iFrame: {wrs_frame.name}, URL: {wrs_frame.url[:60]}")
+
         with page.expect_download(timeout=120_000) as dl_info:
-            target.locator(SEL_EXPORT_EXCEL).first.click(timeout=10_000)
+            wrs_frame.evaluate("cwMenuBarExport()")
 
         dl = dl_info.value
         save_path = download_dir / f"{report_key}_{dl.suggested_filename}"
@@ -271,11 +360,11 @@ def download_excel(
         session.snapshot(page, f"06_downloaded_{report_key}")
         return save_path
 
-    except PwTimeout as exc:
-        session.snapshot(page, f"06_download_fail_{report_key}")
+    except Exception as exc:
+        session.snapshot(page, f"06_wrs_download_fail_{report_key}")
         raise RuntimeError(
-            f"Excel 다운로드 실패 ({report_key}): {exc}\n"
-            "SEL_EXPORT_BTN / SEL_EXPORT_EXCEL 셀렉터를 확인하세요."
+            f"WRS 내보내기 실패 ({report_key}): {exc}\n"
+            "cwMenuBarExport() 호출 또는 exportReport.do 응답을 확인하세요."
         ) from exc
 
 

@@ -78,3 +78,12 @@ class BrowserSession:
             base.with_suffix(".html").write_text(page.content(), encoding="utf-8")
         except Exception as exc:
             log.debug(f"  HTML 덤프 실패: {exc}")
+        # iFrame 내용 덤프 (날짜 필터·버튼 셀렉터 튜닝용)
+        try:
+            for frame in page.frames[1:]:  # 첫 번째는 메인 프레임
+                if not frame.name:
+                    continue
+                frame_path = self.debug_dir / f"{ts}_{label}_frame_{frame.name[:30]}.html"
+                frame_path.write_text(frame.content(), encoding="utf-8")
+        except Exception:
+            pass
