@@ -70,6 +70,14 @@ class VisualReportConfig:
 
 
 @dataclass(frozen=True)
+class GcpConfig:
+    project_id: str
+    daily_subscription: str
+    monthly_subscription: str
+    service_account_path: Path  # Pub/Sub 전용 SA JSON (Sheets/Gmail 과 별개)
+
+
+@dataclass(frozen=True)
 class Config:
     hub: HubConfig
     olap: OlapConfig
@@ -78,6 +86,7 @@ class Config:
     sheets: SheetsConfig
     notify: NotifyConfig
     runtime: RuntimeConfig
+    gcp: GcpConfig
 
 
 def load_config() -> Config:
@@ -141,5 +150,13 @@ def load_config() -> Config:
             download_dir=Path(_get("DOWNLOAD_DIR", "./downloads")).resolve(),
             state_dir=Path(_get("STATE_DIR", "./state")).resolve(),
             logs_dir=Path(_get("LOGS_DIR", "./logs")).resolve(),
+        ),
+        gcp=GcpConfig(
+            project_id=_get("GCP_PROJECT_ID"),
+            daily_subscription=_get("PUBSUB_DAILY_SUBSCRIPTION", "ai-rpa-daily-sub"),
+            monthly_subscription=_get("PUBSUB_MONTHLY_SUBSCRIPTION", "ai-rpa-monthly-sub"),
+            service_account_path=Path(
+                _get("GOOGLE_APPLICATION_CREDENTIALS", "./service_account.json")
+            ).resolve(),
         ),
     )
