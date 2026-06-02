@@ -74,7 +74,9 @@ class GcpConfig:
     project_id: str
     daily_subscription: str
     monthly_subscription: str
-    service_account_path: Path  # Pub/Sub 전용 SA JSON (Sheets/Gmail 과 별개)
+    # 인증: google.auth.default() 자동 탐색 (키 파일 불필요)
+    # 로컬: gcloud auth application-default login
+    # GCP VM: 연결된 서비스 계정 자동 사용
 
 
 @dataclass(frozen=True)
@@ -155,8 +157,5 @@ def load_config() -> Config:
             project_id=_get("GCP_PROJECT_ID"),
             daily_subscription=_get("PUBSUB_DAILY_SUBSCRIPTION", "ai-rpa-daily-sub"),
             monthly_subscription=_get("PUBSUB_MONTHLY_SUBSCRIPTION", "ai-rpa-monthly-sub"),
-            service_account_path=Path(
-                _get("GOOGLE_APPLICATION_CREDENTIALS", "./service_account.json")
-            ).resolve(),
         ),
     )

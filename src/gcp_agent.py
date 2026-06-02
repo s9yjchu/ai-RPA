@@ -110,7 +110,13 @@ def _make_callback():
 # ── 메인 루프 ─────────────────────────────────────────────────────────
 
 def run_agent(config) -> None:
-    """두 Pub/Sub 구독을 스트리밍 풀로 수신한다."""
+    """두 Pub/Sub 구독을 스트리밍 풀로 수신한다.
+
+    인증 우선순위 (google.auth.default 자동 탐색):
+      1. GOOGLE_APPLICATION_CREDENTIALS 환경변수 → 서비스 계정 JSON 키 파일
+      2. gcloud ADC  → gcloud auth application-default login 으로 설정
+      3. GCP VM 메타데이터 서버 → rpa-runner-001 등 Compute Engine VM 자동 인증
+    """
     from google.cloud import pubsub_v1
 
     if not config.gcp.project_id:
