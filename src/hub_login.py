@@ -163,8 +163,13 @@ def _open_via_menu(
             link.click()
 
         popup = popup_info.value
-        # 팝업 내부에서 form POST → SSO 로그인 → 최종 URL 로딩 완료 대기
-        popup.wait_for_load_state("networkidle", timeout=60_000)
+        # 팝업은 window.open("") 으로 먼저 about:blank 로 열리고
+        # form.submit() 으로 SSO URL 로 이동함 → about:blank 에서 떠날 때까지 대기
+        try:
+            popup.wait_for_url(lambda url: url not in ("about:blank", ""), timeout=30_000)
+        except PwTimeout:
+            pass  # 이미 이동했거나 빠르게 진행된 경우
+        popup.wait_for_load_state("load", timeout=60_000)
         log.info(f"  {label} 팝업 열림: {popup.url[:80]}")
         session.snapshot(popup, f"hub_05_{slug}_opened")
         return popup

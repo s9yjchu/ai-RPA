@@ -4,6 +4,8 @@
 Google Sheets **"B2C사업본부 고객지표"** 의 시트를 업데이트합니다.
 매월 1일에는 LOG REPORT / VISUAL REPORT 에서 월별 지표를 추가로 업데이트합니다.
 
+> **운영 담당자용 사용 가이드** → [`사용법.md`](사용법.md)
+
 ---
 
 ## 업무 플로우
@@ -19,14 +21,14 @@ state/daily_YYYY-MM-DD.json 확인
   └─ 재시도 시간 초과(>3시간)? → 실패 메일 → 종료
         │
         ▼
-SASHBI OLAP 로그인 (SSO)
+SPC Hub SSO 로그인 → sis.spc.co.kr → OLAP 팝업
         │
         ├─ 리포트 1: [HPC] 일별 회원관리지표      → Excel 다운로드
         ├─ 리포트 2: [HPC] 채널별 적립·사용건수    → Excel 다운로드
-        └─ 리포트 3: [HPC, POS] HPC 일마감(브랜드) → Excel 다운로드
+        └─ 리포트 3: [HPC, POS] HPC 일마감(브랜드) → HTML 저장
         │
         ▼
-Excel 파싱 (openpyxl)
+파싱 (openpyxl / HTML 파서)
         │
         ▼
 Google Sheets 업데이트
@@ -72,6 +74,7 @@ ai-RPA/
 ├── .env.example               환경변수 템플릿
 ├── .gitignore
 ├── requirements.txt
+├── 사용법.md                  운영 담당자용 사용 가이드
 ├── run_rpa.bat                Task Scheduler 등록용 진입점
 ├── run_rpa.ps1                PowerShell 래퍼 (로그 회전 포함)
 ├── build_windows.ps1          PyInstaller .exe 빌드
@@ -86,14 +89,16 @@ ai-RPA/
     ├── logger.py              파일+콘솔 로깅 (KST)
     ├── browser.py             Playwright 세션 헬퍼
     ├── state_manager.py       실행 상태 JSON 관리
+    ├── hub_login.py           SPC Hub SSO 로그인 공통 모듈
     ├── olap_scraper.py        OLAP 자동화 (로그인·탐색·다운로드)
     ├── log_report_scraper.py  LOG REPORT 자동화 (월 로그인객수)
     ├── visual_report_scraper.py  VISUAL REPORT 자동화 (MAU Excel)
-    ├── excel_parser.py        다운로드 Excel 파싱 (4개 파서)
+    ├── excel_parser.py        다운로드 Excel/HTML 파싱 (4개 파서)
     ├── sheets_writer.py       Google Sheets 쓰기 (일별·월별)
     ├── notifier.py            Gmail 알림
     ├── daily_runner.py        일별 업데이트 오케스트레이션
-    └── monthly_runner.py      월별 업데이트 오케스트레이션
+    ├── monthly_runner.py      월별 업데이트 오케스트레이션
+    └── setup_gui.py           비개발자용 tkinter 설정 마법사
 ```
 
 ---
@@ -110,14 +115,14 @@ ai-RPA/
 
    | 항목 | 입력 내용 |
    |---|---|
-   | SPC 로그인 정보 | SPC 사내 아이디·비밀번호 |
+   | SPC 로그인 정보 | SPC Hub 아이디·비밀번호 (`SPCHUB_ID` / `SPCHUB_PW`) |
    | Google 인증 | `credentials.json` 파일 선택 후 Google 로그인 |
    | 이메일 알림 설정 | 발송자·수신자 Gmail 주소 |
    | 자동 실행 등록 | 버튼 클릭 → Task Scheduler 자동 등록 |
 
 3. **완료** — 이후 매일 08:30에 자동으로 실행됩니다
 
-> **credentials.json** 은 `mkt_edm_rpa` 폴더에 있는 파일을 그대로 사용하거나,
+> **credentials.json** 은 `reference/hp_sett_rpa/` 폴더에 있는 파일을 그대로 사용하거나,
 > IT 담당자에게 요청하세요.
 
 ---
@@ -139,21 +144,20 @@ notepad .env
 
 | 환경변수 | 설명 |
 |---|---|
-| `OLAP_ID` / `OLAP_PW` | SASHBI SSO 로그인 |
-| `LOG_REPORT_URL` | LOG REPORT URL (기본값 내장) |
-| `VISUAL_REPORT_URL` | VISUAL REPORT URL (기본값 내장) |
+| `SPCHUB_ID` / `SPCHUB_PW` | SPC Hub SSO 로그인 (모든 시스템 공통) |
+| `OLAP_ID` / `OLAP_PW` | VISUAL REPORT 전용 (SSO 실패 시 fallback, 보통 불필요) |
 | `SHEETS_SPREADSHEET_ID` | Google Sheets ID (기본값 내장) |
 | `SHEETS_CREDENTIALS_PATH` | credentials.json 경로 |
-| `GMAIL_CREDENTIALS_PATH` | Gmail credentials.json 경로 |
+| `GMAIL_CREDENTIALS_PATH` | Gmail credentials.json 경로 (Sheets와 동일 파일 가능) |
 | `REPORT_SENDER` / `REPORT_RECIPIENTS` | 이메일 발송·수신 주소 |
-| `HEADLESS` | `0` = 브라우저 표시 (튜닝 시) |
-| `DRY_RUN` | `1` = 쓰기·메일 생략 (테스트) |
+| `HEADLESS` | `0` = 브라우저 표시 (셀렉터 튜닝 시) |
+| `DRY_RUN` | `1` = Sheets 쓰기·메일 발송 생략, credentials.json 불필요 |
 
 ```powershell
 # 수동 실행
 python -m src.main daily
-python -m src.main daily --date 2026-05-29 --force
-python -m src.main monthly --year 2025 --month 5 --force
+python -m src.main daily --date 2026-06-01 --force
+python -m src.main monthly --year 2026 --month 5 --force
 ```
 
 </details>
@@ -242,84 +246,92 @@ python -m src.main monthly --year 2025 --month 5 --force
 | J | 객단가 | 리포트 3 |
 | K | HPC 총사용액 | 리포트 3 |
 | L | HPC 사용건수 | 리포트 3 |
-| N | APP 제시건수 | 리포트 2: HPCAPP |
+| N | APP 제시건수 | 리포트 2: HPCAPP 열 값 |
+
+---
+
+## 로그인 플로우 (확인 완료)
+
+모든 내부 시스템은 **SPC Hub SSO** 를 통해 인증합니다.
+
+```
+1. SPC Hub 로그인 (hub.spc.co.kr) — SPCHUB_ID / SPCHUB_PW
+2. 확인/동의 버튼 클릭 (있는 경우)
+3. SSO 게이트 직접 접속 → sis.spc.co.kr 메뉴 페이지 도달
+4. 메뉴 페이지에서 대상 시스템 버튼 클릭 (팝업 열림)
+   - OLAP       → 별도 로그인 없음 (SSO 릴레이)
+   - LOG REPORT → 별도 로그인 없음 (SSO 릴레이)
+   - VISUAL REPORT → 로그인 페이지 표시 시 "OLAP 계정으로 로그인" 클릭
+```
+
+> OLAP 서버 (`dwweb.spc.co.kr:7980`) 는 **평일 업무시간(09:00–18:00 KST) 에만 접속 가능**합니다.
 
 ---
 
 ## 셀렉터 튜닝 가이드
 
-모든 시스템의 셀렉터는 실제 DOM 확인 후 수정이 필요합니다.
+셀렉터가 맞지 않을 경우 `HEADLESS=0, DRY_RUN=1` 로 실행해 `logs/debug/` 스크린샷을 확인합니다.
 
-### OLAP (`src/olap_scraper.py` — `SEL_*`)
+### Hub 로그인 / SIS 메뉴 (`src/hub_login.py` — `SEL_HUB_*`, `SEL_MENU_*`)
 
 ```powershell
 # .env: HEADLESS=0, DRY_RUN=1
 python -m src.main daily
+# logs/debug/hub_*.png 확인
 ```
-
-`logs/debug/` 의 스크린샷 확인 후 수정할 상수:
 
 | 상수 | 역할 |
 |---|---|
-| `SEL_LOGIN_ID/PW/BTN` | 로그인 폼 |
-| `SEL_TREE_NODE` | 좌측 트리 탐색 |
-| `SEL_DATE_START/END` | 날짜 필터 입력 |
+| `SEL_HUB_ID/PW/BTN` | Hub 로그인 폼 |
+| `SEL_HUB_CONFIRM` | 로그인 후 확인/동의 버튼 |
+| `SEL_MENU_OLAP/LOG_REPORT/VISUAL_REPORT` | sis.spc.co.kr 메뉴 버튼 |
+| `SEL_VR_OLAP_LOGIN` | VISUAL REPORT "OLAP 계정으로 로그인" |
+
+### OLAP 트리/필터/다운로드 (`src/olap_scraper.py` — `SEL_*`)
+
+| 상수 | 역할 |
+|---|---|
+| `SEL_TREE_NODE` | 좌측 트리 탐색 (탭·아코디언·리포트 링크) |
+| `SEL_DATE_START/END` | 날짜 필터 input |
 | `SEL_RUN_BTN` | 조회 실행 버튼 |
-| `SEL_EXPORT_BTN/EXCEL` | Excel 다운로드 |
-| `REPORT_FRAME_SELECTOR` | iFrame 사용 여부 (없으면 `None`) |
+| `SEL_EXPORT_BTN` | Excel 다운로드 버튼 (HBI 방식) |
+| `REPORT_FRAME_SELECTOR` | 리포트 콘텐츠 iFrame 선택자 |
 
 ### LOG REPORT (`src/log_report_scraper.py` — `SEL_LR_*`)
 
 ```powershell
-# .env: HEADLESS=0, DRY_RUN=1
-python -m src.main monthly --year 2025 --month 5 --force
-# → logs/debug/lr_*.png 확인
+python -m src.main monthly --year 2026 --month 5 --force
+# logs/debug/lr_*.png 확인
 ```
-
-| 상수 | 역할 |
-|---|---|
-| `SEL_LR_NAV_HAPPYAPP/SUMMARY/TREND` | 메뉴 탐색 경로 |
-| `SEL_LR_PERIOD_SETTINGS` | 설정 아이콘 (주별→월별 전환) |
-| `SEL_LR_MONTHLY_VIEW` | 월별 보기 옵션 |
-| `SEL_LR_MONTH_PICKER` | 월 선택 UI |
-| `SEL_LR_LOGIN_COUNT_ROW` | 순 로그인 회원수 행 레이블 |
 
 ### VISUAL REPORT (`src/visual_report_scraper.py` — `SEL_VR_*`)
 
 ```powershell
-# .env: HEADLESS=0, DRY_RUN=1
-python -m src.main monthly --year 2025 --month 5 --force
-# → logs/debug/vr_*.png 확인
+python -m src.main monthly --year 2026 --month 5 --force
+# logs/debug/vr_*.png 확인
 ```
-
-| 상수 | 역할 |
-|---|---|
-| `SEL_VR_REPORT_BROWSE` | 리포트 찾아보기 버튼 |
-| `SEL_VR_CLOUD/PROMO_FOLDER` | 폴더 탐색 |
-| `SEL_VR_HAPPYAPP_ITEM` | 해피앱 GA 리포트 항목 |
-| `SEL_VR_FILTER_CLEAR` | 필터 지우기 버튼 |
-| `SEL_VR_MAU_WIDGET` | MAU 당월 위젯 |
-| `SEL_VR_MAU_MORE_BTN` | 위젯 ··· 버튼 |
-| `REPORT_LOAD_TIMEOUT` | 로딩 최대 대기 (기본 360초) |
 
 ---
 
 ## Excel 파서 튜닝 가이드
 
+OLAP 이 내보내는 파일은 `.xls` 확장자의 HTML 파일입니다 (openpyxl 미지원 형식).
+파서가 자동으로 감지하여 처리합니다.
+
 ```powershell
-# OLAP Excel 헤더 확인
-python -m src.excel_parser downloads/<파일명>.xlsx
+# 헤더 및 샘플 행 확인
+python -m src.excel_parser downloads/<파일명>
 ```
 
-`src/excel_parser.py` 상단 상수 수정:
+`src/excel_parser.py` 상단 상수 수정이 필요한 경우:
 
 | 상수 | 기본값 | 설명 |
 |---|---|---|
 | `MEMBER_DATE_COL` | `"일자"` | 리포트 1 날짜 컬럼명 |
-| `CHANNEL_KEY_COL` | `"채널"` | 리포트 2 채널명 컬럼 |
-| `CHANNEL_VALUE_COL` | `"제시건수"` | 리포트 2 건수 컬럼 |
-| `CLOSING_BRAND_LABEL` | `"0002. SPC전사(3사)"` | 리포트 3 브랜드 헤더 |
-| `CLOSING_ROW_MAP` | (딕셔너리) | 리포트 3 메트릭 행 레이블 매핑 |
+| `MEMBER_COL_MAP` | (딕셔너리) | 리포트 1 컬럼명 → Sheets 필드명 매핑 |
+| `CHANNEL_TARGET_LABEL` | `"HPCAPP"` | 리포트 2 채널 식별자 (헤더 또는 행 값) |
+| `CLOSING_BRAND_LABEL` | `"0002. SPC전사(3사)"` | 리포트 3 브랜드 컬럼 헤더 |
+| `CLOSING_ROW_MAP` | (딕셔너리) | 리포트 3 메트릭 행 레이블 → Sheets 필드명 매핑 |
 
 ---
 
@@ -347,18 +359,6 @@ token.json          ← 최초 인증 후 생성됨
 
 - `.env` / `credentials.json` / `token.json` 은 **절대 git 에 커밋하지 마세요** (`.gitignore` 포함)
 - 모든 시스템이 내부망 전용이므로 VPN 없이는 실행되지 않습니다
-- `DRY_RUN=1` 상태에서는 Sheets 쓰기와 메일 발송이 생략되며 로그에만 기록됩니다
-- 셀렉터 튜닝 중에는 반드시 `DRY_RUN=1` 로 설정하세요
+- OLAP 서버는 평일 업무시간(09:00–18:00 KST)에만 접속 가능합니다
+- `DRY_RUN=1` 상태에서는 Sheets 쓰기와 메일 발송이 완전히 생략되며, `credentials.json` 없이도 실행됩니다
 - VISUAL REPORT 리포트 로딩에 최대 5~6분 소요됩니다 (정상)
-
----
-
-## 미완성 항목 (튜닝 필요)
-
-| 파일 | 항목 | 방법 |
-|---|---|---|
-| `src/olap_scraper.py` | `SEL_*` 셀렉터 | `HEADLESS=0 DRY_RUN=1 python -m src.main daily` |
-| `src/excel_parser.py` | 컬럼명 상수 | `python -m src.excel_parser downloads/<파일>.xlsx` |
-| `src/log_report_scraper.py` | `SEL_LR_*` 셀렉터 | `HEADLESS=0 DRY_RUN=1 python -m src.main monthly --force` |
-| `src/visual_report_scraper.py` | `SEL_VR_*` 셀렉터 | `HEADLESS=0 DRY_RUN=1 python -m src.main monthly --force` |
-| `src/olap_scraper.py` | `REPORT_FRAME_SELECTOR` | iFrame 사용 여부 확인 후 `None` 또는 실제 선택자 |

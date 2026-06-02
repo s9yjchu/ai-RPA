@@ -156,9 +156,9 @@ def find_or_create_row(
 # ── 셀 배치 업데이트 ──────────────────────────────────────────────────
 
 def _build_batch(
-    row: int, metrics: dict[str, Any], col_map: dict[str, int]
+    row: int, metrics: dict[str, Any], col_map: dict[str, int], sheet_title: str
 ) -> list[dict]:
-    """gspread batch_update 용 cell 리스트 생성."""
+    """gspread batch_update 용 cell 리스트 생성. 시트명을 range 에 포함해 대상 시트를 명시."""
     cells = []
     for field, col in col_map.items():
         if field in ("월", "날짜", "요일"):
@@ -168,10 +168,9 @@ def _build_batch(
         val = metrics[field]
         if val is None:
             continue
-        # gspread range notation: A1 style
         col_letter = _col_letter(col)
         cells.append({
-            "range": f"{col_letter}{row}",
+            "range": f"'{sheet_title}'!{col_letter}{row}",
             "values": [[val]],
         })
     return cells
@@ -197,7 +196,7 @@ def write_hpc_daily(
     """HPC 실적 (일별) 시트에 지표를 씁니다."""
     ws = spreadsheet.worksheet(SHEET_HPC_DAILY)
     row = find_or_create_row(ws, target_date, include_dow=True)
-    batch = _build_batch(row, metrics, HPC_COLS)
+    batch = _build_batch(row, metrics, HPC_COLS, ws.title)
 
     if dry_run:
         log.info(f"  [DRY_RUN] HPC 일별 — 쓰기 생략: {batch}")
@@ -219,7 +218,7 @@ def write_store_daily(
     """전사 매장실적 (일별) 시트에 지표를 씁니다."""
     ws = spreadsheet.worksheet(SHEET_STORE_DAILY)
     row = find_or_create_row(ws, target_date, include_dow=False)
-    batch = _build_batch(row, metrics, STORE_COLS)
+    batch = _build_batch(row, metrics, STORE_COLS, ws.title)
 
     if dry_run:
         log.info(f"  [DRY_RUN] 전사 매장실적 — 쓰기 생략: {batch}")
@@ -261,7 +260,7 @@ def write_hpc_monthly(
         raise ValueError(
             f"[SHEETS] {year}-{month:02d} 행을 찾을 수 없음 (col A YYYYMM 형식 확인 필요)"
         )
-    batch = _build_batch(row, metrics, HPC_MONTHLY_COLS)
+    batch = _build_batch(row, metrics, HPC_MONTHLY_COLS, ws.title)
 
     if dry_run:
         log.info(f"  [DRY_RUN] HPC 월별 — 쓰기 생략: {batch}")

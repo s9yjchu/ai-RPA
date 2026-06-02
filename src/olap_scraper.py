@@ -350,21 +350,18 @@ def download_excel(
 
         log.info(f"  WRS iFrame: {wrs_frame.name}, URL: {wrs_frame.url[:60]}")
 
-        with page.expect_download(timeout=120_000) as dl_info:
-            wrs_frame.evaluate("cwMenuBarExport()")
-
-        dl = dl_info.value
-        save_path = download_dir / f"{report_key}_{dl.suggested_filename}"
-        dl.save_as(save_path)
-        log.info(f"  저장 완료: {save_path}")
-        session.snapshot(page, f"06_downloaded_{report_key}")
+        # iFrame HTML 저장 → HTML 파서로 데이터 추출 (Excel 다운로드 대신)
+        html_content = wrs_frame.content()
+        save_path = download_dir / f"{report_key}.html"
+        save_path.write_text(html_content, encoding="utf-8")
+        log.info(f"  WRS HTML 저장 완료: {save_path.name}")
+        session.snapshot(page, f"06_wrs_html_saved_{report_key}")
         return save_path
 
     except Exception as exc:
         session.snapshot(page, f"06_wrs_download_fail_{report_key}")
         raise RuntimeError(
-            f"WRS 내보내기 실패 ({report_key}): {exc}\n"
-            "cwMenuBarExport() 호출 또는 exportReport.do 응답을 확인하세요."
+            f"WRS HTML 저장 실패 ({report_key}): {exc}"
         ) from exc
 
 

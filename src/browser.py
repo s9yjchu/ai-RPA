@@ -71,7 +71,7 @@ class BrowserSession:
         ts = datetime.now(KST).strftime("%Y%m%d_%H%M%S")
         base = self.debug_dir / f"{ts}_{label}"
         try:
-            page.screenshot(path=str(base.with_suffix(".png")), full_page=True)
+            page.screenshot(path=str(base.with_suffix(".png")), full_page=True, timeout=10_000)
         except Exception as exc:
             log.debug(f"  스크린샷 실패: {exc}")
         try:

@@ -150,26 +150,32 @@ def _write_to_sheets(
     metrics: dict[str, Any],
     state: DailyState,
 ) -> None:
-    spreadsheet = open_spreadsheet(
-        config.sheets.credentials_path,
-        config.sheets.token_path,
-        config.sheets.spreadsheet_id,
-    )
-
-    # HPC 실적 (일별): 신규회원수, 해피앱 로그인수, DAU x2
     hpc_fields = {"신규회원수", "해피앱 로그인수", "해피앱 DAU", "해피오더 DAU"}
     hpc_metrics = {k: v for k, v in metrics.items() if k in hpc_fields}
-    write_hpc_daily(spreadsheet, target_date, hpc_metrics, dry_run=config.runtime.dry_run)
-    state.mark_sheet_written("HPC 실적 (일별)")
 
-    # 전사 매장실적 (일별): POS/HPC 전체 + APP 제시건수
     store_fields = {
         "POS 총매출액", "POS 영수증건수", "POS 거래점포수",
         "HPC 매출액", "HPC 거래점포수", "HPC 총적립액", "HPC 적립건수",
         "객단가", "HPC 총사용액", "HPC 사용건수", "APP 제시건수",
     }
     store_metrics = {k: v for k, v in metrics.items() if k in store_fields}
-    write_store_daily(spreadsheet, target_date, store_metrics, dry_run=config.runtime.dry_run)
+
+    if config.runtime.dry_run:
+        log.info(f"[DRY_RUN] HPC 일별 쓰기 생략: {hpc_metrics}")
+        log.info(f"[DRY_RUN] 전사 매장실적 쓰기 생략: {store_metrics}")
+        state.mark_sheet_written("HPC 실적 (일별)")
+        state.mark_sheet_written("전사 매장실적 (일별)")
+        return
+
+    spreadsheet = open_spreadsheet(
+        config.sheets.credentials_path,
+        config.sheets.token_path,
+        config.sheets.spreadsheet_id,
+    )
+    write_hpc_daily(spreadsheet, target_date, hpc_metrics, dry_run=False)
+    state.mark_sheet_written("HPC 실적 (일별)")
+
+    write_store_daily(spreadsheet, target_date, store_metrics, dry_run=False)
     state.mark_sheet_written("전사 매장실적 (일별)")
 
 
