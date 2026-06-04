@@ -5,13 +5,12 @@ from __future__ import annotations
 import logging
 
 from .config import Config
-from .excel_parser import parse_mau_excel
 from .log_report_scraper import scrape_login_count
 from .notifier import notify_data_not_ready, notify_failure, notify_success
 from .olap_scraper import DataNotReadyError
 from .sheets_writer import open_spreadsheet, write_hpc_monthly
 from .state_manager import MonthlyState
-from .visual_report_scraper import scrape_mau_excel
+from .visual_report_scraper import scrape_mau
 
 log = logging.getLogger(__name__)
 
@@ -43,10 +42,9 @@ def run_monthly(config: Config, year: int, month: int, force: bool = False) -> N
         login_count = scrape_login_count(config, year, month)
         state.mark_source_done("log_report")
 
-        # ── Step 2: VISUAL REPORT → MAU 당월 Excel → A2 값 ────────────
+        # ── Step 2: VISUAL REPORT → MAU 당월 (KPI 툴팁에서 직접 추출) ──
         log.info("[STEP] VISUAL REPORT 스크래핑")
-        mau_path = scrape_mau_excel(config, year, month)
-        mau_value = parse_mau_excel(mau_path)
+        mau_value = scrape_mau(config, year, month)
         state.mark_source_done("visual_report")
 
         # ── Step 3: Google Sheets 쓰기 ─────────────────────────────────
