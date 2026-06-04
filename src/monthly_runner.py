@@ -100,7 +100,7 @@ def run_monthly(config: Config, year: int, month: int, force: bool = False) -> N
     except Exception as exc:
         reason = str(exc)
         log.error(f"[FAIL] {year}-{month:02d} 오류: {reason}", exc_info=True)
-        state.mark_failed(reason)
+        state.mark_failed()
         if state.should_give_up():
             notify_failure(
                 config.notify.gmail_credentials_path,

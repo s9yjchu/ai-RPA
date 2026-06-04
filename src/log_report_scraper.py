@@ -1,18 +1,22 @@
 """LOG REPORT 자동화 — 해피앱 월 로그인 회원수(순 로그인 회원수) 추출.
 
 URL: https://hplog.spc.co.kr:8000/datastory/home
-경로: 해피앱 > 종합 > 누적추이 (유저 접속 추이) > 월별 보기 > 해당 월 선택
+경로: 해피앱 > 종합 > 종합추이(MONTHLY 설정) > 누적추이 > 테이블 월별 보기
+추출값: 순 로그인 회원수 (해당 연월 행)
 
-# ── 셀렉터 튜닝 가이드 ───────────────────────────────────────────────
-# HEADLESS=0, DRY_RUN=1 로 실행하면 브라우저가 열립니다.
-# logs/debug/ 폴더의 스크린샷(.png)·HTML(.html)로 실제 DOM 확인 후
-# 아래 SEL_LR_* 상수를 수정하세요.
+# ── DOM 확인 완료 ────────────────────────────────────────────────────
+# 프로파일 목록 페이지: td.profile[title='해피앱'] 클릭 → window.open → 새 탭
+# 트리 탐색: div[title='...'] 또는 p:has-text('...') (div.tree_node 구조)
+# 월별 전환: 종합추이에서 div.period-select select 를 MONTHLY 로 설정 후 누적추이로 이동
+# 테이블 월별: #period_select select_option("MONTHLY")
+# 데이터 테이블: table 내 thead가 '순 로그인 회원수' 포함, 행 형식 "YYYY.MM월 [start~end]"
 # ────────────────────────────────────────────────────────────────────
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -25,45 +29,23 @@ from . import hub_login
 
 log = logging.getLogger(__name__)
 
-# ── 셀렉터 상수 (실제 DOM 확인 후 수정) ──────────────────────────────
-# 로그인
-SEL_LR_LOGIN_ID  = "input[name='userId'], input[id='userId'], input[name='id'], input[type='text']"
-SEL_LR_LOGIN_PW  = "input[name='password'], input[id='password'], input[type='password']"
-SEL_LR_LOGIN_BTN = "button[type='submit'], input[type='submit'], button:has-text('로그인')"
+# ── 셀렉터 상수 ────────────────────────────────────────────────────────
 
-# 좌측 메뉴 탐색
-SEL_LR_NAV_HAPPYAPP = (
-    "a:has-text('해피앱'), span:has-text('해피앱'), li:has-text('해피앱')"
-)
-SEL_LR_NAV_SUMMARY = (
-    "a:has-text('종합'), span:has-text('종합'), li:has-text('종합')"
-)
-SEL_LR_NAV_TREND = (
-    "a:has-text('누적추이'), a:has-text('유저 접속 추이'), "
-    "span:has-text('누적추이'), span:has-text('유저 접속 추이')"
-)
+# 프로파일 목록 화면의 해피앱 행
+SEL_LR_PROFILE_ROW = "td.profile[title='해피앱'], td[title='해피앱']"
 
-# 월별 보기 전환 — 설정/기간 아이콘 or 탭
-SEL_LR_PERIOD_SETTINGS = (
-    "button[aria-label*='설정'], button[title*='설정'], "
-    "img[title*='설정'], span[title*='기간'], button:has-text('주별')"
-)
-SEL_LR_MONTHLY_VIEW = (
-    "li:has-text('월별'), a:has-text('월별'), button:has-text('월별'), "
-    "option:has-text('월별')"
-)
+# 좌측 트리 메뉴 (div.tree_node 구조)
+SEL_LR_NAV_HAPPYAPP  = "a:has-text('해피앱'), span:has-text('해피앱'), li:has-text('해피앱')"
+SEL_LR_NAV_SUMMARY   = "a:has-text('종합'), span:has-text('종합'), li:has-text('종합')"
+SEL_LR_NAV_SUMTREND  = "div[title='종합추이'], p:has-text('종합추이')"
+SEL_LR_NAV_CUMTREND  = "div[title='누적추이'], p:has-text('누적추이')"
 
-# 월 선택 피커
-SEL_LR_MONTH_PICKER = (
-    "select[name*='month'], select[id*='month'], "
-    "input[placeholder*='월'], button[aria-label*='월']"
-)
+# 테이블 #period_select (tr 내부, inline-block 으로 표시됨)
+SEL_LR_PERIOD_SELECT = "#period_select"
 
-# 순 로그인 회원수 셀 — 테이블 행 레이블로 탐색
-SEL_LR_LOGIN_COUNT_ROW = (
-    "td:has-text('순 로그인 회원수'), td:has-text('신규 로그인 회원수'), "
-    "th:has-text('순 로그인'), tr:has-text('순 로그인 회원수')"
-)
+# 로그인 회원수 컬럼 인덱스 (0-based, 빈 열 포함 후 5열 구조)
+# 열: [날짜, (empty), 순방문자수, 순로그인회원수, 일합계방문자수]
+LR_LOGIN_COL_IDX = 3
 
 
 def scrape_login_count(config: Config, year: int, month: int) -> int:
@@ -71,7 +53,7 @@ def scrape_login_count(config: Config, year: int, month: int) -> int:
 
     데이터 미준비 시 DataNotReadyError 를 raise 합니다.
     """
-    dl_dir = config.runtime.download_dir
+    dl_dir    = config.runtime.download_dir
     debug_dir = config.runtime.logs_dir / "debug"
 
     with BrowserSession(
@@ -82,39 +64,53 @@ def scrape_login_count(config: Config, year: int, month: int) -> int:
         page = session.new_page()
         hub_login.login_to_hub(page, config, session)
         page = hub_login.navigate_to_log_report(page, config, session)
+        page = _select_profile(page, session)
         _navigate_to_trend(page, session)
         _switch_to_monthly(page, session)
-        _select_month(page, year, month, session)
         return _extract_login_count(page, year, month, session)
 
 
 # ── 내부 함수 ─────────────────────────────────────────────────────────
 
-def _login(page: Page, base_url: str, user_id: str, password: str, session: BrowserSession) -> None:
-    log.info("[STEP] LOG REPORT 로그인 페이지 접속")
-    page.goto(base_url, wait_until="domcontentloaded", timeout=30_000)
-    session.snapshot(page, "lr_01_login_page")
+def _select_profile(page: Page, session: BrowserSession) -> Page:
+    """프로파일 목록 화면이면 '해피앱' 클릭 → 새 탭(report?profileId=)을 열고 반환합니다.
 
+    jQuery handler: $(document).on('click', '#report td.profile', function(t) {
+        window.open("report?profileId=" + $(t.target).attr("profileid"), "_blank")
+    })
+    """
     try:
-        id_input = page.locator(SEL_LR_LOGIN_ID).first
-        id_input.wait_for(state="visible", timeout=10_000)
-        id_input.fill(user_id)
-        page.locator(SEL_LR_LOGIN_PW).first.fill(password)
-        page.locator(SEL_LR_LOGIN_BTN).first.click(timeout=5_000)
-        page.wait_for_load_state("networkidle", timeout=30_000)
-        log.info("  로그인 완료")
-        session.snapshot(page, "lr_02_after_login")
-    except PwTimeout as exc:
-        session.snapshot(page, "lr_02_login_timeout")
-        raise RuntimeError(f"LOG REPORT 로그인 실패 (셀렉터 확인 필요): {exc}") from exc
+        profile = page.locator(SEL_LR_PROFILE_ROW).first
+        profile.wait_for(state="visible", timeout=5_000)
+    except PwTimeout:
+        log.info("  프로파일 선택 화면 없음 — 현재 페이지 사용")
+        return page
+
+    log.info("  프로파일 선택 화면 감지 — 새 탭으로 열기")
+    with page.context.expect_page(timeout=15_000) as popup_info:
+        profile.click()
+
+    report_page = popup_info.value
+    report_page.wait_for_load_state("networkidle", timeout=30_000)
+    log.info(f"  대시보드 탭 열림: {report_page.url[:70]}")
+    session.snapshot(report_page, "lr_02b_dashboard")
+    return report_page
 
 
 def _navigate_to_trend(page: Page, session: BrowserSession) -> None:
-    log.info("[STEP] 해피앱 > 종합 > 누적추이 탐색")
-    for label, sel, step in [
-        ("해피앱",    SEL_LR_NAV_HAPPYAPP, "lr_03a_happyapp"),
-        ("종합",      SEL_LR_NAV_SUMMARY,  "lr_03b_summary"),
-        ("누적추이",  SEL_LR_NAV_TREND,    "lr_03c_trend"),
+    """해피앱 > 종합 > 종합추이 로 이동 후 페이지 수준 월별 모드를 설정,
+    이후 누적추이 로 이동합니다.
+
+    종합추이를 먼저 방문해야 div.period-select가 활성화되고
+    누적추이에서 #period_select 월별 전환이 정상 동작합니다.
+    """
+    log.info("[STEP] 해피앱 > 종합 > 종합추이 → (MONTHLY) → 누적추이 탐색")
+
+    # ① 해피앱 > 종합 > 종합추이
+    for label, sel in [
+        ("해피앱",   SEL_LR_NAV_HAPPYAPP),
+        ("종합",     SEL_LR_NAV_SUMMARY),
+        ("종합추이", SEL_LR_NAV_SUMTREND),
     ]:
         try:
             node = page.locator(sel).first
@@ -122,90 +118,103 @@ def _navigate_to_trend(page: Page, session: BrowserSession) -> None:
             node.click()
             time.sleep(0.8)
             log.info(f"  클릭: {label}")
-            session.snapshot(page, step)
         except PwTimeout:
             session.snapshot(page, f"lr_nav_fail_{label}")
-            raise RuntimeError(
-                f"'{label}' 메뉴를 찾을 수 없습니다. "
-                f"logs/debug/{step}.png 를 확인해 셀렉터를 수정하세요."
-            )
-    page.wait_for_load_state("networkidle", timeout=30_000)
+            raise RuntimeError(f"'{label}' 메뉴를 찾을 수 없습니다.")
+    page.wait_for_load_state("networkidle", timeout=20_000)
+    session.snapshot(page, "lr_03a_summary_trend")
+
+    # ② 종합추이에서 페이지 수준 MONTHLY 설정
+    try:
+        page.evaluate(
+            "() => { var d = document.querySelector('div.period-select');"
+            " if (d) d.style.display = 'block'; }"
+        )
+        page.locator("div.period-select select").select_option("MONTHLY", timeout=5_000)
+        time.sleep(2)
+        page.wait_for_load_state("networkidle", timeout=15_000)
+        log.info("  페이지 수준 MONTHLY 설정 완료")
+    except PwTimeout:
+        log.warning("  div.period-select select 를 찾을 수 없음 — 건너뜀")
+
+    # ③ 누적추이로 이동
+    try:
+        node = page.locator(SEL_LR_NAV_CUMTREND).first
+        node.wait_for(state="visible", timeout=10_000)
+        node.click()
+        time.sleep(1.5)
+        log.info("  클릭: 누적추이")
+    except PwTimeout:
+        session.snapshot(page, "lr_nav_fail_누적추이")
+        raise RuntimeError("'누적추이' 메뉴를 찾을 수 없습니다.")
+    page.wait_for_load_state("networkidle", timeout=20_000)
+    session.snapshot(page, "lr_03b_cumulate_trend")
 
 
 def _switch_to_monthly(page: Page, session: BrowserSession) -> None:
-    log.info("[STEP] 월별 보기 전환")
+    """누적추이 데이터 테이블의 #period_select를 MONTHLY 로 전환합니다."""
+    log.info("[STEP] 누적추이 테이블 월별 보기 전환")
     try:
-        btn = page.locator(SEL_LR_PERIOD_SETTINGS).first
-        btn.wait_for(state="visible", timeout=8_000)
-        btn.click()
-        time.sleep(0.5)
-        page.locator(SEL_LR_MONTHLY_VIEW).first.click(timeout=5_000)
+        page.locator(SEL_LR_PERIOD_SELECT).select_option("MONTHLY", timeout=8_000)
+        time.sleep(3)
         page.wait_for_load_state("networkidle", timeout=20_000)
-        log.info("  월별 보기 전환 완료")
-        session.snapshot(page, "lr_04_monthly_view")
+        log.info("  테이블 월별 전환 완료")
+        session.snapshot(page, "lr_04_monthly_table")
     except PwTimeout:
         session.snapshot(page, "lr_04_monthly_fail")
         raise RuntimeError(
-            "월별 보기 전환 실패 (SEL_LR_PERIOD_SETTINGS / SEL_LR_MONTHLY_VIEW 확인 필요)"
-        )
-
-
-def _select_month(page: Page, year: int, month: int, session: BrowserSession) -> None:
-    log.info(f"[STEP] {year}-{month:02d} 월 선택")
-    try:
-        picker = page.locator(SEL_LR_MONTH_PICKER).first
-        picker.wait_for(state="visible", timeout=8_000)
-        tag = picker.evaluate("el => el.tagName.toLowerCase()")
-        if tag == "select":
-            picker.select_option(label=f"{year}년 {month}월", timeout=5_000)
-        else:
-            picker.fill(f"{year}-{month:02d}")
-            picker.press("Enter")
-        page.wait_for_load_state("networkidle", timeout=20_000)
-        log.info(f"  {year}-{month:02d} 선택 완료")
-        session.snapshot(page, "lr_05_month_selected")
-    except PwTimeout:
-        session.snapshot(page, "lr_05_month_fail")
-        raise RuntimeError(
-            f"{year}-{month:02d} 월 선택 실패 (SEL_LR_MONTH_PICKER 확인 필요)"
+            "누적추이 테이블 #period_select 를 찾을 수 없습니다. "
+            "SEL_LR_PERIOD_SELECT 확인 필요."
         )
 
 
 def _extract_login_count(page: Page, year: int, month: int, session: BrowserSession) -> int:
-    log.info("[STEP] 순 로그인 회원수 추출")
-    session.snapshot(page, "lr_06_before_extract")
+    """누적추이 테이블 월별 보기에서 순 로그인 회원수를 추출합니다.
 
-    try:
-        row_el = page.locator(SEL_LR_LOGIN_COUNT_ROW).first
-        row_el.wait_for(state="visible", timeout=10_000)
+    테이블 구조 (확인 완료):
+      thead: [주별/월별 토글, 순방문자수, 순로그인회원수, 일합계방문자수]
+      tbody row: [YYYY.MM월 [start~end], (empty), 순방문자수, 순로그인회원수, 일합계방문자수]
+    → LR_LOGIN_COL_IDX = 3 (0-based)
+    """
+    log.info(f"[STEP] {year}-{month:02d} 순 로그인 회원수 추출")
+    session.snapshot(page, "lr_05_before_extract")
 
-        # 해당 행의 값 셀 — 레이블 다음 td (형제 탐색)
-        # 단일 값이 있는 경우와 여러 달 열이 있는 경우 모두 대응
-        row_html = row_el.evaluate("el => el.closest('tr') ? el.closest('tr').innerText : el.innerText")
-        log.debug(f"  행 텍스트: {row_html!r}")
+    target_prefix = f"{year}.{month:02d}월"
 
-        # 숫자만 추출 (쉼표 포함)
-        import re
-        numbers = re.findall(r"[\d,]+", row_html.replace(" ", ""))
-        if not numbers:
-            raise DataNotReadyError(
-                f"순 로그인 회원수 행에서 숫자를 찾을 수 없습니다 ({year}-{month:02d})"
-            )
+    rows = page.evaluate("""() => {
+        var tables = Array.from(document.querySelectorAll('table'));
+        var target = tables.find(function(t){
+            return t.innerText && t.innerText.includes('순 로그인 회원수');
+        });
+        if (!target) return [];
+        return Array.from(target.querySelectorAll('tr')).map(function(r){
+            return Array.from(r.querySelectorAll('th,td')).map(function(c){
+                return c.innerText.trim();
+            });
+        });
+    }""")
 
-        # 여러 숫자가 있으면 레이블 제외한 첫 번째 유효한 숫자 사용
-        for raw in numbers:
-            val = int(raw.replace(",", ""))
-            if val > 0:
-                log.info(f"  순 로그인 회원수: {val:,}")
+    if not rows:
+        session.snapshot(page, "lr_05_table_missing")
+        raise DataNotReadyError(
+            f"순 로그인 회원수 테이블을 찾을 수 없습니다 ({year}-{month:02d}). "
+            "데이터 미준비 또는 페이지 구조 변경 가능성."
+        )
+
+    for row in rows:
+        if not row or not row[0].startswith(target_prefix):
+            continue
+        # row 형식: [YYYY.MM월 [...], '', 순방문자수, 순로그인회원수, 일합계방문자수]
+        if len(row) > LR_LOGIN_COL_IDX:
+            raw = row[LR_LOGIN_COL_IDX].replace(",", "").strip()
+            if raw.isdigit():
+                val = int(raw)
+                log.info(f"  순 로그인 회원수 ({target_prefix}): {val:,}")
                 return val
 
-        raise DataNotReadyError(
-            f"순 로그인 회원수 값이 0 또는 미준비 상태입니다 ({year}-{month:02d})"
-        )
-
-    except PwTimeout:
-        session.snapshot(page, "lr_06_extract_fail")
-        raise DataNotReadyError(
-            f"순 로그인 회원수 셀을 찾을 수 없습니다 ({year}-{month:02d}). "
-            "데이터 미준비 또는 SEL_LR_LOGIN_COUNT_ROW 셀렉터 확인 필요."
-        )
+    # 대상 월 행 없음 → 아직 데이터 미생성
+    session.snapshot(page, "lr_05_month_missing")
+    raise DataNotReadyError(
+        f"{target_prefix} 행을 찾을 수 없습니다. "
+        "데이터가 아직 LOG REPORT 에 반영되지 않았거나 월별 보기 전환이 실패했습니다."
+    )
