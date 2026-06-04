@@ -71,11 +71,15 @@ Google Sheets 업데이트
 
 ```
 ai-RPA/
-├── .env.example               환경변수 템플릿
+├── .env_user_template         최종 사용자 배포용 .env 템플릿 (자격증명 빈 칸)
 ├── .gitignore
 ├── requirements.txt
+├── README.md                  이 문서 (개발자용)
 ├── 사용법.md                  운영 담당자용 사용 가이드
-├── run_rpa.bat                Task Scheduler 등록용 진입점
+├── 설치_사용_가이드.md        최종 사용자용 설치·운영 가이드
+├── B2C_고객지표_RPA.zip       최종 사용자 배포 패키지 (credentials.json 제외)
+├── setup_user.bat             최종 사용자용 원클릭 설치 스크립트
+├── run_rpa.bat                수동 실행 진입점
 ├── run_rpa.ps1                PowerShell 래퍼 (로그 회전 포함)
 ├── build_windows.ps1          PyInstaller .exe 빌드
 ├── downloads/                 OLAP Excel 임시 파일 (gitignore)
@@ -98,32 +102,60 @@ ai-RPA/
     ├── notifier.py            Gmail 알림
     ├── daily_runner.py        일별 업데이트 오케스트레이션
     ├── monthly_runner.py      월별 업데이트 오케스트레이션
-    └── setup_gui.py           비개발자용 tkinter 설정 마법사
+    └── setup_gui.py           tkinter 설정 마법사 (개발자용)
 ```
 
 ---
 
 ## 설치 및 초기 설정
 
-### 일반 사용자 (비개발자)
+### 최종 사용자 배포 (비개발자)
 
-1. **`setup.bat` 더블클릭**
-   - 패키지 및 브라우저 자동 설치 (처음 실행 시 2~3분 소요)
-   - 설정 마법사 창이 열립니다
+**배포 패키지**: `B2C_고객지표_RPA.zip` (프로젝트 루트)
 
-2. **설정 마법사에서 4가지 항목 설정**
+zip 에 포함된 파일:
 
-   | 항목 | 입력 내용 |
-   |---|---|
-   | SPC 로그인 정보 | SPC Hub 아이디·비밀번호 (`SPCHUB_ID` / `SPCHUB_PW`) |
-   | Google 인증 | `credentials.json` 파일 선택 후 Google 로그인 |
-   | 이메일 알림 설정 | 발송자·수신자 Gmail 주소 |
-   | 자동 실행 등록 | 버튼 클릭 → Task Scheduler 자동 등록 |
+| 파일 | 역할 |
+|---|---|
+| `setup_user.bat` | 원클릭 설치 스크립트 |
+| `run_rpa.bat` | 수동 실행용 |
+| `.env` | 인증 정보 템플릿 (설치 중 자동 채워짐) |
+| `requirements.txt` | Python 패키지 목록 |
+| `설치_사용_가이드.md` | 사용자 가이드 |
+| `src/*.py` | 소스 코드 |
 
-3. **완료** — 이후 매일 08:30에 자동으로 실행됩니다
+> ⚠️ **`credentials.json` 은 zip 에 포함되지 않습니다.**  
+> 보안상 관리자가 별도 채널(이메일, Teams 등)로 전달해야 합니다.
+> 사용자는 `credentials.json` 을 폴더에 복사한 뒤 `setup_user.bat` 을 실행합니다.
 
-> **credentials.json** 은 `reference/hp_sett_rpa/` 폴더에 있는 파일을 그대로 사용하거나,
-> IT 담당자에게 요청하세요.
+**사용자 설치 흐름**:
+
+```
+1. zip 압축 해제 → 폴더에 credentials.json 복사
+2. setup_user.bat 관리자 권한으로 실행
+   ① SPC Hub 아이디 입력
+   ② SPC Hub 비밀번호 입력 (****로 마스킹됨)
+   ③ 브라우저 팝업 → Google 계정 [허용] 클릭
+3. "설치 완료" 메시지 → 이후 매일 08:30 자동 실행
+```
+
+`setup_user.bat` 이 자동으로 수행하는 작업:
+- Python 가상환경 생성 및 패키지 설치
+- Playwright Chromium 브라우저 설치
+- SPC Hub 자격증명을 `.env` 에 저장 (비밀번호 마스킹 처리)
+- Google OAuth 인증 후 `token.json` 생성
+- Windows Task Scheduler 에 일별(08:30~11:30, 7회) + 월별(매월 1일) 작업 등록
+
+### 개발자용 수동 설치
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m playwright install chromium
+Copy-Item .env_user_template .env   # 또는 기존 .env 사용
+notepad .env                        # 자격증명 직접 입력
+```
 
 ---
 
@@ -358,6 +390,7 @@ token.json          ← 최초 인증 후 생성됨
 ## 주의 사항
 
 - `.env` / `credentials.json` / `token.json` 은 **절대 git 에 커밋하지 마세요** (`.gitignore` 포함)
+- `credentials.json` 은 배포 zip 에도 포함하지 않습니다 — 관리자가 별도 전달
 - 모든 시스템이 내부망 전용이므로 VPN 없이는 실행되지 않습니다
 - OLAP 서버는 평일 업무시간(09:00–18:00 KST)에만 접속 가능합니다
 - `DRY_RUN=1` 상태에서는 Sheets 쓰기와 메일 발송이 완전히 생략되며, `credentials.json` 없이도 실행됩니다
