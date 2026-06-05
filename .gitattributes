@@ -1,0 +1,7 @@
+# .bat 파일은 cmd.exe 에서 ^ 줄 이음이 CRLF 필요 — 플랫폼 무관 강제 적용
+*.bat   text eol=crlf
+*.ps1   text eol=crlf
+*.py    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.json  text eol=lf
