@@ -128,6 +128,20 @@ zip 에 포함된 파일:
 > 보안상 관리자가 별도 채널(이메일, Teams 등)로 전달해야 합니다.
 > 사용자는 `credentials.json` 을 폴더에 복사한 뒤 `setup_user.bat` 을 실행합니다.
 
+> ⚠️ **`.bat` 파일 줄바꿈 (CRLF 필수)**: `setup_user.bat` / `run_rpa.bat` 은 반드시 **CRLF** 줄바꿈이어야 합니다.
+> Git 설정이나 에디터(VS Code 등)의 LF 자동 변환으로 LF 전용이 되면 `cmd.exe` 에서 `^` 줄 이음이 동작하지 않아
+> `'wright'은(는) 내부 또는 외부 명령...` 오류가 발생합니다.
+> zip 재생성 전 CRLF 확인 및 변환:
+> ```powershell
+> # 확인
+> python -c "raw=open('setup_user.bat','rb').read(); print('CRLF:',raw.count(b'\r\n'),'LF-only:',raw.count(b'\n')-raw.count(b'\r\n'))"
+> # 변환 (LF-only 가 0이 아닐 때)
+> foreach ($f in @('setup_user.bat','run_rpa.bat')) {
+>     $t = [System.IO.File]::ReadAllText($f) -replace "`r`n","`n" -replace "`n","`r`n"
+>     [System.IO.File]::WriteAllBytes($f, [System.Text.UTF8Encoding]::new($false).GetBytes($t))
+> }
+> ```
+
 **사용자 설치 흐름**:
 
 ```

@@ -68,6 +68,9 @@ python -m src.main monthly --year 2026 --month 5 --force
 **미포함**: `credentials.json` — 보안상 관리자가 별도 전달. 사용자가 압축 해제 후
            같은 폴더에 복사해야 `setup_user.bat` 이 실행됨.
 
+**주의**: zip 재생성 전 `.bat` 파일이 CRLF 줄바꿈인지 확인. LF 전용이면 `cmd.exe` `^` 줄 이음이 깨져
+`'wright'은(는) 내부 또는 외부 명령...` 오류 발생. 확인: `python -c "raw=open('setup_user.bat','rb').read(); print('CRLF:',raw.count(b'\r\n'),'LF:',raw.count(b'\n')-raw.count(b'\r\n'))"` — LF 가 0이어야 함.
+
 zip 재생성:
 ```powershell
 # 프로젝트 루트에서 실행
