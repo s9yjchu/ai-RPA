@@ -62,8 +62,8 @@ python -m src.main monthly --year 2026 --month 5 --force
 
 `B2C_고객지표_RPA.zip` (프로젝트 루트) — 최종 사용자에게 전달하는 파일.
 
-포함: `setup_user.bat`, `run_rpa.bat`, `.env` (템플릿), `requirements.txt`,
-      `설치_사용_가이드.md`, `src/*.py`
+포함: `setup_user.bat`, `run_rpa.bat`, `python-3.12.9-amd64.exe`, `.env` (템플릿),
+      `requirements_user.txt`, `설치_사용_가이드.md`, `src/*.py`
 
 **미포함**: `credentials.json` — 보안상 관리자가 별도 전달. 사용자가 압축 해제 후
            같은 폴더에 복사해야 `setup_user.bat` 이 실행됨.
@@ -81,7 +81,7 @@ stage = pathlib.Path('_pkg_stage')
 shutil.rmtree(stage, ignore_errors=True)
 (stage / 'src').mkdir(parents=True)
 
-for f in ['setup_user.bat','run_rpa.bat','requirements.txt','설치_사용_가이드.md']:
+for f in ['setup_user.bat','run_rpa.bat','requirements_user.txt','설치_사용_가이드.md','python-3.12.9-amd64.exe']:
     shutil.copy(f, stage / f)
 shutil.copy('.env_user_template', stage / '.env')
 

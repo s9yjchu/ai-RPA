@@ -73,15 +73,15 @@ Google Sheets 업데이트
 ai-RPA/
 ├── .env_user_template         최종 사용자 배포용 .env 템플릿 (자격증명 빈 칸)
 ├── .gitignore
-├── requirements.txt
+├── requirements.txt           개발자용 전체 패키지 (google-cloud-pubsub 포함)
+├── requirements_user.txt      최종 사용자 배포용 패키지 (GCP 제외, Python 3.12 호환)
+├── python-3.12.9-amd64.exe   배포 번들용 Python 설치파일 (zip 포함)
 ├── README.md                  이 문서 (개발자용)
 ├── 사용법.md                  운영 담당자용 사용 가이드
 ├── 설치_사용_가이드.md        최종 사용자용 설치·운영 가이드
 ├── B2C_고객지표_RPA.zip       최종 사용자 배포 패키지 (credentials.json 제외)
 ├── setup_user.bat             최종 사용자용 원클릭 설치 스크립트
-├── run_rpa.bat                수동 실행 진입점
-├── run_rpa.ps1                PowerShell 래퍼 (로그 회전 포함)
-├── build_windows.ps1          PyInstaller .exe 빌드
+├── run_rpa.bat                수동 실행 진입점 (성공/실패 UI + pause 포함)
 ├── downloads/                 OLAP Excel 임시 파일 (gitignore)
 ├── state/                     일별/월별 실행 상태 JSON (gitignore)
 ├── logs/                      실행 로그 + 디버그 스크린샷 (gitignore)
@@ -102,7 +102,9 @@ ai-RPA/
     ├── notifier.py            Gmail 알림
     ├── daily_runner.py        일별 업데이트 오케스트레이션
     ├── monthly_runner.py      월별 업데이트 오케스트레이션
-    └── setup_gui.py           tkinter 설정 마법사 (개발자용)
+    ├── setup_helper.py        설치 헬퍼 (Google OAuth + 설정 검증, setup_user.bat 호출용)
+    ├── setup_gui.py           tkinter 설정 마법사 (개발자용)
+    └── gcp_agent.py           GCP Pub/Sub 구독 에이전트
 ```
 
 ---
@@ -118,9 +120,10 @@ zip 에 포함된 파일:
 | 파일 | 역할 |
 |---|---|
 | `setup_user.bat` | 원클릭 설치 스크립트 |
-| `run_rpa.bat` | 수동 실행용 |
+| `run_rpa.bat` | 수동 실행용 (성공/실패 UI + pause) |
+| `python-3.12.9-amd64.exe` | Python 설치파일 번들 (PC에 없거나 버전 불일치 시 자동 실행) |
 | `.env` | 인증 정보 템플릿 (설치 중 자동 채워짐) |
-| `requirements.txt` | Python 패키지 목록 |
+| `requirements_user.txt` | Python 패키지 목록 (GCP 제외, Python 3.12 호환) |
 | `설치_사용_가이드.md` | 사용자 가이드 |
 | `src/*.py` | 소스 코드 |
 
@@ -129,8 +132,6 @@ zip 에 포함된 파일:
 > 사용자는 `credentials.json` 을 폴더에 복사한 뒤 `setup_user.bat` 을 실행합니다.
 
 > ⚠️ **`.bat` 파일 줄바꿈 (CRLF 필수)**: `setup_user.bat` / `run_rpa.bat` 은 반드시 **CRLF** 줄바꿈이어야 합니다.
-> Git 설정이나 에디터(VS Code 등)의 LF 자동 변환으로 LF 전용이 되면 `cmd.exe` 에서 `^` 줄 이음이 동작하지 않아
-> `'wright'은(는) 내부 또는 외부 명령...` 오류가 발생합니다.
 > zip 재생성 전 CRLF 확인 및 변환:
 > ```powershell
 > # 확인
@@ -147,18 +148,23 @@ zip 에 포함된 파일:
 ```
 1. zip 압축 해제 → 폴더에 credentials.json 복사
 2. setup_user.bat 관리자 권한으로 실행
-   ① SPC Hub 아이디 입력
-   ② SPC Hub 비밀번호 입력 (****로 마스킹됨)
-   ③ 브라우저 팝업 → Google 계정 [허용] 클릭
-3. "설치 완료" 메시지 → 이후 매일 08:30 자동 실행
+   ① Python 버전 자동 확인 (3.11/3.12 → 그대로 사용, 그 외 → 번들 설치파일 자동 실행)
+   ② 패키지 + Chromium 자동 설치
+   ③ SPC Hub 아이디 입력
+   ④ SPC Hub 비밀번호 입력 (****로 마스킹됨)
+   ⑤ Google 이메일 주소 입력 (SPC Hub 아이디와 다를 수 있음)
+   ⑥ 브라우저 팝업 → 해당 Google 계정 [허용] 클릭
+3. "설치 완료" 메시지 + 바탕화면 바로가기 생성 → 이후 매일 08:30 자동 실행
 ```
 
 `setup_user.bat` 이 자동으로 수행하는 작업:
-- Python 가상환경 생성 및 패키지 설치
+- Python 버전 확인 및 자동 설치 (3.11/3.12 외 버전이면 번들 Python 3.12 설치)
+- Python 가상환경 생성 및 패키지 설치 (`requirements_user.txt`)
 - Playwright Chromium 브라우저 설치
 - SPC Hub 자격증명을 `.env` 에 저장 (비밀번호 마스킹 처리)
-- Google OAuth 인증 후 `token.json` 생성
+- Google OAuth 인증 후 `token.json` 생성 (login_hint 로 지정 계정 선택 유도)
 - Windows Task Scheduler 에 일별(08:30~11:30, 7회) + 월별(매월 1일) 작업 등록
+- 바탕화면에 "B2C 고객지표 수동실행" 바로가기 생성
 
 ### 개발자용 수동 설치
 
