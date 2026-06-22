@@ -7,6 +7,21 @@ echo.
 
 cd /d "%~dp0"
 
+REM ── 0-a. 설치 경로 ASCII 확인 ────────────────────────────────────────
+REM Node.js 가 한글/특수문자 경로에서 충돌하므로 ASCII 경로 필수
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$p='%~dp0'; if($p -match '[^\x00-\x7F]'){Write-Host '[오류] 설치 경로에 한글/특수문자가 포함되어 있습니다.'; Write-Host ''; Write-Host '       C:\RPA\ 같은 영문 경로에 압축을 풀고 다시 실행하세요.'; Write-Host '       현재 경로:' $p; exit 1}else{exit 0}" > nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo [오류] 설치 경로에 한글 또는 특수문자가 포함되어 있습니다.
+    echo.
+    echo        예^) C:\RPA\ 또는 C:\Users\andrew\RPA\ 같은
+    echo            영문 경로에 압축을 풀고 다시 실행하세요.
+    echo.
+    pause & exit /b 1
+)
+echo [OK] 설치 경로 확인
+
 REM ── 0. credentials.json 확인 ────────────────────────────────────────
 if not exist "credentials.json" (
     echo.
@@ -144,24 +159,25 @@ echo [등록] 자동 실행 일정 등록 중...
 set TASKBASE=B2C_RPA_Daily
 set RUNBAT=%~dp0run_rpa.bat
 
-REM 기존 작업 제거
-for %%H in (0830 0900 0930 1000 1030 1100 1130) do (
+REM 기존 작업 제거 (이전 버전 0830 슬롯 포함)
+for %%H in (0830 0900 0930 1000 1030 1100 1130 1200) do (
     schtasks /delete /tn "%TASKBASE%_%%H" /f > nul 2>&1
 )
 
-REM 매일 08:30~11:30 (30분 간격) 작업 등록 — run_rpa.bat 이 cd /d 로 작업 디렉토리를 올바르게 설정함
-schtasks /create /tn "%TASKBASE%_0830" /tr "\"%RUNBAT%\" daily" /sc daily /st 08:30 /ru "%USERNAME%" /f > nul 2>&1
-schtasks /create /tn "%TASKBASE%_0900" /tr "\"%RUNBAT%\" daily" /sc daily /st 09:00 /ru "%USERNAME%" /f > nul 2>&1
-schtasks /create /tn "%TASKBASE%_0930" /tr "\"%RUNBAT%\" daily" /sc daily /st 09:30 /ru "%USERNAME%" /f > nul 2>&1
-schtasks /create /tn "%TASKBASE%_1000" /tr "\"%RUNBAT%\" daily" /sc daily /st 10:00 /ru "%USERNAME%" /f > nul 2>&1
-schtasks /create /tn "%TASKBASE%_1030" /tr "\"%RUNBAT%\" daily" /sc daily /st 10:30 /ru "%USERNAME%" /f > nul 2>&1
-schtasks /create /tn "%TASKBASE%_1100" /tr "\"%RUNBAT%\" daily" /sc daily /st 11:00 /ru "%USERNAME%" /f > nul 2>&1
-schtasks /create /tn "%TASKBASE%_1130" /tr "\"%RUNBAT%\" daily" /sc daily /st 11:30 /ru "%USERNAME%" /f > nul 2>&1
+REM 매일 09:00~12:00 (30분 간격) 작업 등록 — OLAP 09:00 오픈 기준
+REM run_rpa.bat 이 cd /d 로 작업 디렉토리를 올바르게 설정함
+schtasks /create /tn "%TASKBASE%_0900" /tr "\"%RUNBAT%\" daily /auto" /sc daily /st 09:00 /ru "%USERNAME%" /f > nul 2>&1
+schtasks /create /tn "%TASKBASE%_0930" /tr "\"%RUNBAT%\" daily /auto" /sc daily /st 09:30 /ru "%USERNAME%" /f > nul 2>&1
+schtasks /create /tn "%TASKBASE%_1000" /tr "\"%RUNBAT%\" daily /auto" /sc daily /st 10:00 /ru "%USERNAME%" /f > nul 2>&1
+schtasks /create /tn "%TASKBASE%_1030" /tr "\"%RUNBAT%\" daily /auto" /sc daily /st 10:30 /ru "%USERNAME%" /f > nul 2>&1
+schtasks /create /tn "%TASKBASE%_1100" /tr "\"%RUNBAT%\" daily /auto" /sc daily /st 11:00 /ru "%USERNAME%" /f > nul 2>&1
+schtasks /create /tn "%TASKBASE%_1130" /tr "\"%RUNBAT%\" daily /auto" /sc daily /st 11:30 /ru "%USERNAME%" /f > nul 2>&1
+schtasks /create /tn "%TASKBASE%_1200" /tr "\"%RUNBAT%\" daily /auto" /sc daily /st 12:00 /ru "%USERNAME%" /f > nul 2>&1
 
-REM 월별 — 매월 1~4일 08:30
-schtasks /create /tn "B2C_RPA_Monthly" /tr "\"%RUNBAT%\" monthly" /sc monthly /d 1 /st 08:30 /ru "%USERNAME%" /f > nul 2>&1
+REM 월별 — 매월 1~4일 09:00
+schtasks /create /tn "B2C_RPA_Monthly" /tr "\"%RUNBAT%\" monthly /auto" /sc monthly /d 1 /st 09:00 /ru "%USERNAME%" /f > nul 2>&1
 
-echo [OK] 자동 실행 등록 완료 (08:30~11:30 매일, 월별 매월 1일)
+echo [OK] 자동 실행 등록 완료 (09:00~12:00 매일, 월별 매월 1일)
 
 REM ── 9. 바탕화면 바로가기 생성 ────────────────────────────────────────
 echo [등록] 바탕화면 바로가기 생성 중...
@@ -173,7 +189,7 @@ echo.
 echo ============================================================
 echo   설치 완료!
 echo.
-echo   - 매일 08:30 자동 실행됩니다 (PC 가 켜져 있어야 합니다)
+echo   - 매일 09:00 자동 실행됩니다 (PC 가 켜져 있어야 합니다)
 echo   - 수동 실행: 바탕화면의 "B2C 고객지표 수동실행" 더블클릭
 echo   - 자세한 사용법: 설치_사용_가이드.md 참조
 echo ============================================================

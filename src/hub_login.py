@@ -35,13 +35,20 @@ SEL_HUB_CONFIRM = (
     "button:has-text('동의'), a:has-text('동의')"
 )
 
-# ── 정보화시스템 접속 ──────────────────────────────────────────────
-# Hub HTML 확인: 정보화시스템 링크는 SSO 게이트를 통해 sis.spc.co.kr 으로 연결됨
-# onclick="GwMainMenu.fn.goPage(..., 'https://hubsso.spc.co.kr:9443/dnsagent/gate/legacySSOGate.jsp?nurl=https://sis.spc.co.kr', ...)"
-# 드롭다운 클릭 대신 SSO 게이트 URL 직접 접속 (더 안정적)
-_SIS_SSO_GATE = (
-    "https://hubsso.spc.co.kr:9443/dnsagent/gate/legacySSOGate.jsp"
-    "?nurl=https://sis.spc.co.kr"
+# ── Hub → 정보화시스템 네비게이션 셀렉터 ──────────────────────────────
+# Hub 상단 nav "System Link" 드롭다운 → "정보화시스템" 클릭 → sis.spc.co.kr/main/main.jsp
+# onclick="GwMainMenu.fn.goPage(..., legacySSOGate...?nurl=sis.spc.co.kr, ...)"
+# TUNING: HEADLESS=0, DRY_RUN=1 실행 → logs/debug/hub_04_before_sis_click.png 참조
+SEL_HUB_SYSTEM_LINK = (
+    "a:has-text('System Link'), li:has-text('System Link') > a, "
+    ".nav-item:has-text('System Link') > a, span:has-text('System Link')"
+)
+# 정보화시스템 링크만 특정 — onclick 의 nurl 이 sis.spc.co.kr 을 가리킴.
+# 주의: [onclick*='legacySSOGate'] 는 HAPPY TASTER 등 모든 SSO 링크에 매칭되므로 금지.
+# (legacySSOGate 로는 .first 가 엉뚱한 숨겨진 링크를 잡아 timeout 발생)
+SEL_HUB_SIS_LINK = (
+    "a[onclick*='sis.spc.co.kr'], "
+    "a:has-text('정보화시스템'), li:has-text('정보화시스템') > a"
 )
 
 # ── sis.spc.co.kr 메뉴 페이지 버튼 (DOM 확인 완료) ────────────────
@@ -125,14 +132,47 @@ def navigate_to_visual_report(page: Page, config, session: BrowserSession) -> Pa
 
 # ── 내부 헬퍼 ─────────────────────────────────────────────────────────
 
-def _open_info_system_menu(page: Page, session: BrowserSession) -> None:
-    """SSO 게이트를 통해 정보화시스템(sis.spc.co.kr)으로 직접 이동."""
-    log.info("[STEP] 정보화시스템 접속 (SSO 게이트)")
+def _open_info_system_menu(page: Page, config, session: BrowserSession) -> Page:
+    """Hub 'System Link → 정보화시스템' 클릭으로 sis.spc.co.kr/main/ 에 도달.
+
+    sis.spc.co.kr 은 Hub SSO 를 통해서만 접근 가능 (직접 URL 접근 불가).
+    클릭 결과는 현재 탭 이동 또는 새 창 두 가지 모두 처리.
+    Returns the Page that landed on sis.spc.co.kr.
+    """
+    log.info("[STEP] 정보화시스템 접속 (Hub 네비게이션)")
     try:
-        page.goto(_SIS_SSO_GATE, wait_until="domcontentloaded", timeout=30_000)
-        page.wait_for_load_state("networkidle", timeout=20_000)
-        log.info(f"  정보화시스템 URL: {page.url[:80]}")
-        session.snapshot(page, "hub_04_sis_menu")
+        # System Link 드롭다운을 호버해서 하위 메뉴 노출
+        try:
+            sys_link = page.locator(SEL_HUB_SYSTEM_LINK).first
+            sys_link.wait_for(state="visible", timeout=5_000)
+            sys_link.hover()
+            page.wait_for_timeout(600)
+            log.info("  System Link 드롭다운 호버 완료")
+        except PwTimeout:
+            log.info("  System Link 드롭다운 없음 — 직접 링크 탐색")
+
+        # 링크는 드롭다운 안에 숨어 있을 수 있음 → visible 가 아닌 attached 로 대기.
+        sis_link = page.locator(SEL_HUB_SIS_LINK).first
+        sis_link.wait_for(state="attached", timeout=10_000)
+        session.snapshot(page, "hub_04_before_sis_click")
+
+        # 클릭 → 새 창 캡처 시도 (5초 안에 새 창 없으면 현재 탭 이동으로 처리).
+        # 숨겨진 요소여도 goPage onclick 이 실행되도록 JS click 으로 디스패치.
+        try:
+            with page.context.expect_page(timeout=5_000) as popup_info:
+                sis_link.evaluate("el => el.click()")
+            sis_page = popup_info.value
+            sis_page.wait_for_load_state("networkidle", timeout=30_000)
+            log.info(f"  정보화시스템 새 창: {sis_page.url[:80]}")
+        except PwTimeout:
+            # 새 창 없음 — 현재 탭에서 sis.spc.co.kr 로 이동 대기
+            page.wait_for_url(lambda url: "sis.spc.co.kr" in url, timeout=30_000)
+            page.wait_for_load_state("networkidle", timeout=20_000)
+            sis_page = page
+            log.info(f"  정보화시스템 URL: {sis_page.url[:80]}")
+
+        session.snapshot(sis_page, "hub_04_sis_menu")
+        return sis_page
     except Exception as exc:
         session.snapshot(page, "hub_04_sis_fail")
         raise RuntimeError(f"정보화시스템 접속 실패: {exc}") from exc
@@ -150,16 +190,16 @@ def _open_via_menu(
     각 버튼은 window.open() + form POST 로 새 팝업 창을 엽니다.
     Playwright expect_page() 로 팝업을 캡처하고 로딩 완료를 기다립니다.
     """
-    _open_info_system_menu(page, session)
+    sis_page = _open_info_system_menu(page, config, session)
 
     log.info(f"  {label} 버튼 클릭")
     slug = label.lower().replace(" ", "_")
     try:
-        link = page.locator(link_selector).first
+        link = sis_page.locator(link_selector).first
         link.wait_for(state="visible", timeout=10_000)
 
         # window.open() 팝업을 expect_page 로 캡처
-        with page.context.expect_page(timeout=15_000) as popup_info:
+        with sis_page.context.expect_page(timeout=15_000) as popup_info:
             link.click()
 
         popup = popup_info.value
@@ -175,7 +215,7 @@ def _open_via_menu(
         return popup
 
     except PwTimeout as exc:
-        session.snapshot(page, f"hub_05_{slug}_fail")
+        session.snapshot(sis_page, f"hub_05_{slug}_fail")
         raise RuntimeError(
             f"{label} 팝업 열기 실패 (셀렉터 또는 팝업 타임아웃 확인 필요): {exc}"
         ) from exc

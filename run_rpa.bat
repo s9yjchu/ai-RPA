@@ -1,15 +1,34 @@
 @echo off
+chcp 65001 > nul
 :: 고객지표 RPA — 수동 실행 / Task Scheduler 진입점
 
-setlocal
+setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 set MODE=%~1
 if "%MODE%"=="" set MODE=daily
 
-if exist ".venv\Scripts\activate.bat" (
-    call .venv\Scripts\activate.bat
+:: /auto 플래그 감지 (Task Scheduler 에서 전달) — Python 에는 넘기지 않음
+set AUTO=0
+set PY_ARGS=
+for %%A in (%~2 %~3 %~4 %~5) do (
+    if /I "%%A"=="/auto" (
+        set AUTO=1
+    ) else if not "%%A"=="" (
+        set PY_ARGS=!PY_ARGS! %%A
+    )
 )
+
+if not exist ".venv\Scripts\activate.bat" (
+    echo.
+    echo [오류] 설치가 완료되지 않았습니다.
+    echo.
+    echo        setup_user.bat 을 먼저 실행해주세요.
+    echo.
+    if %AUTO%==0 pause
+    exit /b 1
+)
+call .venv\Scripts\activate.bat
 
 echo.
 echo ============================================================
@@ -18,7 +37,7 @@ echo   실행이 끝날 때까지 이 창을 닫지 마세요.
 echo ============================================================
 echo.
 
-python -m src.main %MODE% %~2 %~3 %~4
+python -m src.main %MODE% %PY_ARGS%
 set EXIT_CODE=%ERRORLEVEL%
 
 echo.
@@ -38,7 +57,16 @@ if %EXIT_CODE%==0 (
     echo ============================================================
 )
 echo.
-pause
+
+:: 수동 실행: 최신 로그를 메모장으로 열고 창 유지
+if %AUTO%==0 (
+    for /f "delims=" %%L in ('dir /b /o-d "logs\*.log" 2^>nul') do (
+        start notepad "logs\%%L"
+        goto :show_log_done
+    )
+    :show_log_done
+    pause
+)
 
 endlocal
 exit /b %EXIT_CODE%

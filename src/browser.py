@@ -3,11 +3,37 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
 from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_playwright
+
+# Node.js v22 crashes with ACCESS_VIOLATION when JavaScript module paths
+# contain non-ASCII characters (e.g. Korean folder names). If playwright's
+# package directory is on a non-ASCII path, copy it to a temp ASCII location.
+def _ensure_ascii_cli(cli_path: str) -> str:
+    if cli_path.isascii():
+        return cli_path
+    import hashlib
+    import shutil
+    import tempfile
+    pkg_dir = os.path.dirname(cli_path)
+    digest = hashlib.md5(Path(cli_path).read_bytes()).hexdigest()[:8]
+    dest = Path(tempfile.gettempdir()) / f"pw_pkg_{digest}"
+    if not (dest / "cli.js").exists():
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(pkg_dir, dest)
+    return str(dest / "cli.js")
+
+import playwright._impl._driver as _pw_driver
+_orig_compute = _pw_driver.compute_driver_executable
+def _patched_compute():
+    node, cli = _orig_compute()
+    return node, _ensure_ascii_cli(cli)
+_pw_driver.compute_driver_executable = _patched_compute
 
 log = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
