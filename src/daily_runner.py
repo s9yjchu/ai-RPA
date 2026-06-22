@@ -17,7 +17,7 @@ from .excel_parser import (
 from .notifier import notify_data_not_ready, notify_failure, notify_success
 from .olap_scraper import DataNotReadyError, login, scrape_report
 from .sheets_writer import open_spreadsheet, write_hpc_daily, write_store_daily
-from .state_manager import DailyState
+from .state_manager import DAILY_CUTOFF_HOURS, DailyState
 
 log = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
@@ -48,6 +48,22 @@ def run_daily(config: Config, target_date: date | None = None, force: bool = Fal
 
     if state.should_give_up() and not force:
         log.error(f"[ABORT] {target_date} 최대 재시도 시간 초과 — 수동 확인 필요")
+        # 포기 시 1회만 실패 알림 (30분마다 재기동되므로 중복 발송 방지).
+        if not state.give_up_notified:
+            try:
+                notify_failure(
+                    config.notify.gmail_credentials_path,
+                    config.notify.gmail_token_path,
+                    config.notify.report_sender,
+                    config.notify.report_recipients,
+                    target_date,
+                    f"최대 재시도 시간({DAILY_CUTOFF_HOURS}시간) 초과 — 데이터 미준비 또는 반복 실패. 수동 확인 필요.",
+                    state.attempts,
+                )
+                state.mark_give_up_notified()
+                log.info("  [STATE] 포기 알림 메일 발송 완료")
+            except Exception as exc:
+                log.warning(f"  포기 알림 메일 발송 실패 (다음 실행에서 재시도): {exc}")
         return
 
     log.info(f"[START] 일별 업데이트 시작: {target_date} (시도 #{state.attempts + 1})")

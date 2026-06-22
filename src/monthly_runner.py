@@ -9,7 +9,7 @@ from .log_report_scraper import scrape_login_count
 from .notifier import notify_data_not_ready, notify_failure, notify_success
 from .olap_scraper import DataNotReadyError
 from .sheets_writer import open_spreadsheet, write_hpc_monthly
-from .state_manager import MonthlyState
+from .state_manager import MONTHLY_MAX_DAYS, MonthlyState
 from .visual_report_scraper import scrape_mau
 
 log = logging.getLogger(__name__)
@@ -31,6 +31,22 @@ def run_monthly(config: Config, year: int, month: int, force: bool = False) -> N
 
     if state.should_give_up() and not force:
         log.error(f"[ABORT] {year}-{month:02d} 최대 재시도 기간 초과 — 수동 확인 필요")
+        # 포기 시 1회만 실패 알림 (재기동마다 중복 발송 방지).
+        if not state.give_up_notified:
+            try:
+                notify_failure(
+                    config.notify.gmail_credentials_path,
+                    config.notify.gmail_token_path,
+                    config.notify.report_sender,
+                    config.notify.report_recipients,
+                    _month_label(year, month),
+                    f"최대 재시도 기간({MONTHLY_MAX_DAYS}일) 초과 — 데이터 미준비 또는 반복 실패. 수동 확인 필요.",
+                    state.attempts,
+                )
+                state.mark_give_up_notified()
+                log.info("  [STATE] 포기 알림 메일 발송 완료")
+            except Exception as exc:
+                log.warning(f"  포기 알림 메일 발송 실패 (다음 실행에서 재시도): {exc}")
         return
 
     log.info(f"[START] 월별 업데이트 시작: {year}-{month:02d} (시도 #{state.attempts + 1})")

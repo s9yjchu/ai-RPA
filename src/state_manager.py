@@ -44,6 +44,7 @@ class DailyState:
             "first_attempt_at": None,
             "last_attempt_at": None,
             "completed_at": None,
+            "give_up_notified": False,
             "errors": [],
         }
 
@@ -60,6 +61,14 @@ class DailyState:
     @property
     def attempts(self) -> int:
         return self._d["attempts"]
+
+    @property
+    def give_up_notified(self) -> bool:
+        return self._d.get("give_up_notified", False)
+
+    def mark_give_up_notified(self) -> None:
+        self._d["give_up_notified"] = True
+        self._save()
 
     def should_give_up(self) -> bool:
         """첫 시도 후 DAILY_CUTOFF_HOURS 경과 시 포기."""
@@ -121,6 +130,7 @@ class MonthlyState:
             "first_attempt_at": None,
             "last_attempt_at": None,
             "completed_at": None,
+            "give_up_notified": False,
             "errors": [],
         }
 
@@ -137,6 +147,14 @@ class MonthlyState:
     @property
     def attempts(self) -> int:
         return self._d["attempts"]
+
+    @property
+    def give_up_notified(self) -> bool:
+        return self._d.get("give_up_notified", False)
+
+    def mark_give_up_notified(self) -> None:
+        self._d["give_up_notified"] = True
+        self._save()
 
     def should_give_up(self) -> bool:
         """1일 첫 시도 후 MONTHLY_MAX_DAYS일 경과 시 포기."""
