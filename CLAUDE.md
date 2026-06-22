@@ -229,21 +229,25 @@ iFrame HTML (`frmSASHBIAA00012A`) 을 직접 파싱해 데이터 추출.
 
 ### 일별 (daily)
 ```
-Task Scheduler: 08:30 기동, 30분마다 반복, 3시간 동안
-    └─ state = success  → skip
-    └─ should_give_up() → 실패 메일, exit
-    └─ DataNotReadyError → 알림 메일, exit (다음 30분에 재시도)
-    └─ 기타 오류 → state = failed, 실패 메일, exit
+Task Scheduler: 09:00~12:00 30분 간격 7회 작업 (B2C_RPA_Daily_0900~_1200, /sc daily)
+                ※ OLAP 09:00 오픈 기준. should_give_up 3시간 = 09:00 첫 시도 시 12:00 까지.
+    └─ state = success     → skip
+    └─ should_give_up()    → 실패 메일(give_up_notified 로 1회만), exit
+    └─ DataNotReadyError    → 알림 메일, exit (다음 30분에 재시도)
+    └─ 기타 오류 → state = failed, (포기 시점 도달 시) 실패 메일, exit
 ```
 
 ### 월별 (monthly) — 매월 1일
 ```
-Task Scheduler: 매월 1일 08:30 기동, 30분마다 반복, 4일 동안
-    └─ state = success  → skip
-    └─ should_give_up() → 실패 메일, exit
-    └─ DataNotReadyError → 알림 메일, exit (다음 30분에 재시도)
-    └─ 기타 오류 → state = failed, 실패 메일, exit
+Task Scheduler: B2C_RPA_Monthly, /sc monthly /d 1 /st 09:00 → 매월 1일 09:00 1회만 발화
+    └─ state = success     → skip
+    └─ should_give_up()    → 실패 메일(1회), exit
+    └─ DataNotReadyError    → 알림 메일, exit
+    └─ 기타 오류 → state = failed, (포기 시점 도달 시) 실패 메일, exit
 ```
+⚠️ should_give_up 의 4일(MONTHLY_MAX_DAYS) 재시도 한도와 달리, Task Scheduler 는
+   1일에 1회만 발화한다. 1일에 데이터 미준비면 다음 달까지 자동 재시도되지 않음
+   (운영 판단 필요 — setup_user.bat 월별 작업 등록부 참조).
 
 ## 주요 튜닝 포인트
 
