@@ -311,7 +311,8 @@ python -m src.main monthly --year 2026 --month 5 --force
 ```
 1. SPC Hub 로그인 (hub.spc.co.kr) — SPCHUB_ID / SPCHUB_PW
 2. 확인/동의 버튼 클릭 (있는 경우)
-3. SSO 게이트 직접 접속 → sis.spc.co.kr 메뉴 페이지 도달
+3. Hub nav "System Link" → "정보화시스템" 클릭 → sis.spc.co.kr 메뉴 페이지 도달
+   (직접 URL 접근은 login.jsp 로 리다이렉트되므로 Hub 메뉴를 통해서만 진입)
 4. 메뉴 페이지에서 대상 시스템 버튼 클릭 (팝업 열림)
    - OLAP       → 별도 로그인 없음 (SSO 릴레이)
    - LOG REPORT → 별도 로그인 없음 (SSO 릴레이)
@@ -338,6 +339,8 @@ python -m src.main daily
 |---|---|
 | `SEL_HUB_ID/PW/BTN` | Hub 로그인 폼 |
 | `SEL_HUB_CONFIRM` | 로그인 후 확인/동의 버튼 |
+| `SEL_HUB_SYSTEM_LINK` | Hub nav "System Link" 드롭다운 (best-effort 호버) |
+| `SEL_HUB_SIS_LINK` | "정보화시스템" 링크 (sis.spc.co.kr 특정, 숨겨진 상태로 JS 클릭) |
 | `SEL_MENU_OLAP/LOG_REPORT/VISUAL_REPORT` | sis.spc.co.kr 메뉴 버튼 |
 | `SEL_VR_OLAP_LOGIN` | VISUAL REPORT "OLAP 계정으로 로그인" |
 
