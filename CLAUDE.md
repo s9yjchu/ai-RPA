@@ -54,10 +54,14 @@ setup_user.bat                        # 원클릭 설치 (비개발자용)
 setup.bat                             # 최초 설치 + 설정 마법사 실행
 python -m src.setup_gui               # 설정 마법사만 단독 실행
 
-python -m src.main daily              # 어제 날짜 일별 업데이트
+python -m src.main daily              # 어제 날짜 일별 업데이트(+당월 공백 자동 백필)
 python -m src.main daily --date YYYY-MM-DD --force
 python -m src.main monthly            # 이번 달 월별 업데이트 (매월 1일 실행)
 python -m src.main monthly --year 2026 --month 5 --force
+python -m src.main backfill           # 당월 공백 셀만 일괄 백필
+python -m src.main backfill --month 2026-06   # 해당 월 전체 강제 재처리(잘못 쓰인 값 교정)
+python -m src.integrity --blanks      # 백필 대상(공백) 날짜 목록 확인
+python -m src.integrity --dedupe [--apply]    # 중복 행 탐지(기본 dry-run)/삭제
 ```
 
 ## 배포 패키지
@@ -114,8 +118,9 @@ src/
 ├── state_manager.py       DailyState / MonthlyState — state/ 폴더에 JSON 저장.
 │                          should_give_up() 로 재시도 시간 초과 판단.
 ├── hub_login.py           SPC Hub SSO 로그인 공통 모듈.
-│                          login_to_hub() → _SIS_SSO_GATE URL 직접 접속
-│                          → _open_via_menu() 팝업 캡처.
+│                          login_to_hub() → 로그인 후 _login_succeeded() 검증
+│                          (실패 시 _extract_login_error 로 SSO 코드 추출 후 RuntimeError).
+│                          → 메뉴 네비게이션 → _open_via_menu() 팝업 캡처.
 │                          navigate_to_olap / log_report / visual_report().
 ├── olap_scraper.py        OLAP 자동화의 핵심. SEL_* 상수로 셀렉터 분리.
 │                          login() → hub_login 경유. scrape_report() 전체 플로우.
@@ -132,15 +137,31 @@ src/
 │                          HTML 위장 XLS 자동 감지 (OLE magic bytes 확인).
 │                          HPCAPP wide/tall 포맷 자동 감지.
 │                          SAS 결측값 "." → None 처리.
+│                          parse_closing_report(path, target_date): 일마감 WRS 는 [대상일,전일]
+│                          2개 날짜를 나란히 보여줌(바깥 열 c0=날짜) → headers 속성으로
+│                          target_date 열그룹(c0)에 고정 추출(전일 혼입 방지).
+│                          _normalize_dashes: 날짜의 유니코드 마이너스(−,U+2212)→ASCII.
 │                          CLI: python -m src.excel_parser <파일> 로 헤더 확인.
 ├── sheets_writer.py       gspread 기반. find_or_create_row() 로 날짜 행 탐색/생성.
-│                          _build_batch() 에 sheet_title 포함 → 올바른 시트에 쓰기.
+│                          col B(일자)는 실제 날짜 시리얼이고 표시형식이 시트마다 다름
+│                          (HPC '2021. 1. 1', 매장 '2022-01-01(토)'). build_date_row_map 가
+│                          UNFORMATTED 시리얼로 읽어 매칭 — FORMATTED 파싱 금지(중복행 원인).
+│                          행은 staff 가 미리 생성 → 기존 행 갱신, append 시 WARNING.
 │                          write_hpc_daily / write_store_daily / write_hpc_monthly.
+├── integrity.py           사전 무결성 점검. find_blank_dates() 로 RPA 공백 셀 날짜 탐지,
+│                          dedupe() 로 중복 행 정리. CLI: --blanks / --dedupe[ --apply].
 ├── notifier.py            Gmail API. notify_success / notify_failure /
 │                          notify_data_not_ready 3가지.
+│                          notify_failure 는 collect_log_artifacts() 로 모은
+│                          로그·디버그 스냅샷을 첨부(_select_attachments, 20MB 가드).
+├── log_uploader.py        실패 로그/스냅샷을 구글 드라이브 공유 폴더로 업로드(보조).
+│                          LOG_UPLOAD_DRIVE=1 일 때만. drive.file 스코프. 오류는 삼킴.
+│                          머신별 폴더 생성 후 LOG_ADMIN_EMAIL 에 reader 공유.
 ├── daily_runner.py        run_daily() — 다운로드 → 파싱 → 쓰기 → 알림 순서 조율.
+│                          성공 후 _auto_backfill() 로 당월 공백 날짜 best-effort 채움(상한 7일).
+│                          run_backfill(dates) — 로그인 1회로 여러 날짜 일괄 처리(날짜별 격리).
 │                          DRY_RUN=1 시 open_spreadsheet 호출 자체를 생략.
-│                          DataNotReadyError 는 실패가 아닌 재시도 대기로 처리.
+│                          DataNotReadyError(일마감 대상일 미존재 포함) 는 재시도 대기로 처리.
 ├── monthly_runner.py      run_monthly() — LOG REPORT + VISUAL REPORT → Sheets 업데이트.
 │                          DataNotReadyError 재시도 처리. 매월 1일 실행.
 └── setup_gui.py           비개발자용 tkinter 설정 마법사. python -m src.setup_gui.
@@ -307,6 +328,15 @@ HEADLESS=0, DRY_RUN=1 로 실행 → logs/debug/vr_*.png 확인
 - DRY_RUN 체크는 `daily_runner._write_to_sheets` 진입부에서 일괄 처리
   (open_spreadsheet 자체를 건너뜀 — credentials.json 없어도 DRY_RUN 가능)
 - `DataNotReadyError` 는 재시도 가능한 일시적 상태 — 로그 레벨 WARNING, 상태 failed 로 전환 안 함
+- 시트 날짜 매칭은 **반드시 UNFORMATTED 시리얼**로(`build_date_row_map`). col B 표시형식이
+  시트마다 달라(`2021. 1. 1` / `2022-01-01(토)`) FORMATTED 문자열 파싱은 실패→중복행을 만든다.
+- 일마감 파서는 **target_date c0(날짜) 열그룹에 고정** 추출. 날짜의 유니코드 마이너스(U+2212)는
+  `_normalize_dashes` 로 ASCII 정규화(미적용 시 날짜검증·매칭 실패 → verify_date 우회 유혹).
+- Google OAuth 스코프 단일 출처: `config.GOOGLE_OAUTH_SCOPES` (sheets/gmail/drive.file).
+  ⚠️ 토큰 **로드** 시에는 스코프를 강제하지 말 것
+  (`Credentials.from_authorized_user_file(path)` — 인자 없이). 부여보다 넓은 스코프를
+  강제하면 미재인증 토큰의 `refresh()` 가 `invalid_scope` 로 깨져 Sheets·메일이 모두 실패한다.
+  전체 스코프는 **신규 동의**(`InstalledAppFlow`, `setup_helper.do_auth`)에서만 요청.
 
 ## 참고 프로젝트 (`reference/`)
 

@@ -15,7 +15,9 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
+from urllib.parse import unquote
 
 from playwright.sync_api import Page, TimeoutError as PwTimeout
 
@@ -96,6 +98,16 @@ def login_to_hub(page: Page, config, session: BrowserSession) -> None:
     except PwTimeout:
         log.info("  확인 버튼 없음 — 건너뜀")
 
+    # 로그인 성공 검증 — 실패 시 페이지가 로그인 폼으로 되돌아오며 SSO 에러코드 노출.
+    # 검증 없이 진행하면 자격증명 오류가 20초 뒤 엉뚱한 "정보화시스템 접속 실패"
+    # 타임아웃으로 둔갑한다(원인 오인 방지).
+    if not _login_succeeded(page):
+        reason = _extract_login_error(page)
+        session.snapshot(page, "hub_02_login_fail")
+        raise RuntimeError(
+            f"SPC Hub 로그인 실패 — SPCHUB_ID/SPCHUB_PW 를 확인하세요 ({reason})"
+        )
+
     log.info("  Hub 로그인 완료")
 
 
@@ -131,6 +143,66 @@ def navigate_to_visual_report(page: Page, config, session: BrowserSession) -> Pa
 
 
 # ── 내부 헬퍼 ─────────────────────────────────────────────────────────
+
+# SSO 에러코드 → 사람이 읽을 수 있는 사유 (확인된 코드만 매핑)
+_SSO_ERROR_REASONS = {
+    "11020003": "아이디 또는 비밀번호 불일치",
+    "11020004": "SSO 일시적 불가 — 잠시 후 재시도",
+}
+
+
+def _login_succeeded(page: Page) -> bool:
+    """Hub 로그인 성공 여부 판정.
+
+    실패하면 페이지가 로그인 폼으로 되돌아옴(#userId/#btnLogin 재노출).
+    성공하면 homGwMain 대시보드로 이동하여 로그인 폼이 사라진다.
+    """
+    # 성공 신호: 대시보드 URL 이동
+    try:
+        if "homGwMain" in (page.url or ""):
+            return True
+    except Exception:
+        pass
+    # 실패 신호: 로그인 폼이 여전히 보임
+    try:
+        return not page.locator("#btnLogin, #userId").first.is_visible(timeout=2_000)
+    except Exception:
+        # 판정 불가 시 보수적으로 성공으로 간주(정상 경로를 막지 않음)
+        return True
+
+
+def _extract_login_error(page: Page) -> str:
+    """로그인 실패 사유를 best-effort 로 추출 (#ssoInfo / nsso_error_* / 코드 매핑)."""
+    code = ""
+    message = ""
+    try:
+        html = page.content()
+    except Exception:
+        html = ""
+
+    m = re.search(r"nsso_error_code=(\d+)", html)
+    if m:
+        code = m.group(1)
+    m = re.search(r"nsso_error_message=([^\"'&]+)", html)
+    if m:
+        message = unquote(m.group(1)).replace("+", " ").strip()
+
+    if not code:
+        try:
+            txt = page.locator("#ssoInfo").first.inner_text(timeout=1_000)
+            m = re.search(r"(\d{6,})", txt or "")
+            if m:
+                code = m.group(1)
+        except Exception:
+            pass
+
+    reason = _SSO_ERROR_REASONS.get(code, "")
+    parts = [p for p in (reason, message) if p]
+    detail = " / ".join(dict.fromkeys(parts))  # 중복 제거, 순서 보존
+    if code:
+        return f"{detail} (코드 {code})" if detail else f"SSO 오류 코드 {code}"
+    return detail or "원인 미상(로그인 페이지 잔류)"
+
 
 def _open_info_system_menu(page: Page, config, session: BrowserSession) -> Page:
     """Hub 'System Link → 정보화시스템' 클릭으로 sis.spc.co.kr/main/ 에 도달.

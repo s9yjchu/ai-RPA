@@ -266,7 +266,9 @@ def _verify_report_date(page: Page, target_date: date) -> bool:
     yyyymmdd = target_date.strftime("%Y%m%d")
 
     def _has_date(text: str) -> bool:
-        return date_str in text or alt in text or yyyymmdd in text
+        # WRS 일마감 날짜는 유니코드 마이너스(−, U+2212)를 쓰므로 ASCII 로 정규화 후 검색.
+        t = (text or "").replace("−", "-").replace("–", "-").replace("—", "-")
+        return date_str in t or alt in t or yyyymmdd in t
 
     # 외부 페이지 확인
     if _has_date(page.content()):

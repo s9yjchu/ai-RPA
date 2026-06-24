@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -12,9 +12,13 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
+from .config import GOOGLE_OAUTH_SCOPES
+
 log = logging.getLogger(__name__)
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+# 단일 출처(config.GOOGLE_OAUTH_SCOPES) 사용 — 설치 시 동의 범위가
+# sheets/gmail/drive 를 모두 포함하도록 통일. setup_helper.do_auth 가 이 목록으로 동의.
+SCOPES = GOOGLE_OAUTH_SCOPES
 
 # ── 대상 시트 이름 ────────────────────────────────────────────────────
 SHEET_HPC_DAILY   = "HPC 실적 (일별)"
@@ -67,7 +71,10 @@ def get_client(credentials_path: Path, token_path: Path) -> gspread.Client:
     creds: Credentials | None = None
 
     if token_path.exists():
-        creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+        # 스코프를 강제하지 않고 토큰에 부여된 스코프로 로드 — 새 스코프(drive.file)를
+        # 강제하면 미재인증 토큰의 refresh 가 invalid_scope 로 깨진다.
+        # 전체 스코프(SCOPES) 요청은 신규 동의(InstalledAppFlow) 시에만 적용한다.
+        creds = Credentials.from_authorized_user_file(str(token_path))
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -93,26 +100,67 @@ def open_spreadsheet(
 
 # ── 날짜 행 탐색 / 생성 ──────────────────────────────────────────────
 
+# Google Sheets 날짜 시리얼 기준일 (1899-12-30 == serial 0)
+_SHEETS_EPOCH = date(1899, 12, 30)
+
+
 def _parse_cell_date(val: str) -> date | None:
-    """셀 문자열 값을 date 로 파싱 (다양한 형식 처리)."""
+    """셀 문자열 값을 date 로 파싱 (다양한 형식 처리).
+
+    한국 로케일 표시('2021. 1. 1')·요일 접미('2022-01-01(토)')도 처리하도록
+    숫자만 추출해 재구성한다. 유니코드 대시는 ASCII 로 정규화.
+    """
     if not val:
         return None
+    s = str(val).strip().replace("−", "-").replace("–", "-").replace("—", "-")
     for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%m/%d/%Y", "%Y%m%d"):
         try:
-            return datetime.strptime(val.strip(), fmt).date()
+            return datetime.strptime(s, fmt).date()
         except ValueError:
             continue
+    # fallback: 앞쪽 연-월-일 숫자 3개를 직접 추출 ('2021. 1. 1', '2022-01-01(토)' 등)
+    import re
+    m = re.match(r"\s*(\d{4})\D+(\d{1,2})\D+(\d{1,2})", s)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
     return None
+
+
+def _cell_to_date(v: Any) -> date | None:
+    """UNFORMATTED 셀 값(날짜 시리얼 정수/실수 또는 문자열)을 date 로 변환."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        try:
+            return _SHEETS_EPOCH + timedelta(days=int(v))
+        except (ValueError, OverflowError):
+            return None
+    if isinstance(v, str):
+        return _parse_cell_date(v)
+    return None
+
+
+def build_date_row_map(ws: gspread.Worksheet) -> dict[date, int]:
+    """col B(일자)를 UNFORMATTED 로 읽어 {date: 1-based 첫 행번호} 맵을 만든다.
+
+    날짜는 실제 시리얼로 저장되어 있으나 표시 형식이 시트마다 달라(FORMATTED 파싱 불가),
+    반드시 UNFORMATTED 로 읽어 시리얼→date 로 변환한다. 중복 날짜는 **첫(정본) 행** 유지.
+    """
+    col_b = ws.col_values(2, value_render_option="UNFORMATTED_VALUE")
+    m: dict[date, int] = {}
+    for i, cell in enumerate(col_b, start=1):
+        d = _cell_to_date(cell)
+        if d is not None and d not in m:
+            m[d] = i
+    return m
 
 
 def _find_row_by_date(ws: gspread.Worksheet, target_date: date) -> int | None:
     """column B (날짜) 에서 target_date 와 일치하는 1-based 행 번호 반환."""
-    col_b = ws.col_values(2)  # 1-based → list index 0
-    for i, cell in enumerate(col_b):
-        parsed = _parse_cell_date(cell)
-        if parsed == target_date:
-            return i + 1  # 1-based
-    return None
+    return build_date_row_map(ws).get(target_date)
 
 
 def _append_date_row(
@@ -149,7 +197,11 @@ def find_or_create_row(
     if row is not None:
         log.info(f"  기존 행 발견: row={row}")
         return row
-    log.info(f"  행 없음 → 새 행 생성")
+    # 행은 staff 가 미리 생성해 두므로, 미발견은 (신규 최신일을 제외하면) 이상 신호.
+    log.warning(
+        f"  [SHEETS] {target_date} 기존 행 없음 → 새 행 append "
+        "(미리 생성된 행 범위를 벗어난 신규일이 아니라면 날짜 형식/시트를 확인하세요)"
+    )
     return _append_date_row(ws, target_date, include_dow=include_dow)
 
 
