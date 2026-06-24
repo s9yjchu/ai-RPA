@@ -71,9 +71,9 @@ def main() -> int:
             run_monthly(config, year=year, month=month, force=args.force)
 
         elif args.mode == "backfill":
-            from datetime import timedelta
-
-            from .daily_runner import yesterday_kst
+            # NOTE: yesterday_kst / timedelta 는 모듈 상단에서 이미 import 됨. 함수 안에서
+            # 다시 import 하면 그 이름이 함수 전체의 지역변수로 취급돼 daily 분기(line 64)가
+            # UnboundLocalError 가 난다. 여기서는 모듈 전역만 사용한다.
             from .integrity import current_month_window, find_blank_dates
             from .sheets_writer import open_spreadsheet
 
