@@ -6,7 +6,13 @@ import logging
 
 from .config import Config
 from .log_report_scraper import scrape_login_count
-from .notifier import notify_data_not_ready, notify_failure, notify_success
+from .log_uploader import upload_logs
+from .notifier import (
+    collect_log_artifacts,
+    notify_data_not_ready,
+    notify_failure,
+    notify_success,
+)
 from .olap_scraper import DataNotReadyError
 from .sheets_writer import open_spreadsheet, write_hpc_monthly
 from .state_manager import MONTHLY_MAX_DAYS, MonthlyState
@@ -34,14 +40,9 @@ def run_monthly(config: Config, year: int, month: int, force: bool = False) -> N
         # 포기 시 1회만 실패 알림 (재기동마다 중복 발송 방지).
         if not state.give_up_notified:
             try:
-                notify_failure(
-                    config.notify.gmail_credentials_path,
-                    config.notify.gmail_token_path,
-                    config.notify.report_sender,
-                    config.notify.report_recipients,
-                    _month_label(year, month),
+                _send_failure(
+                    config, state, year, month,
                     f"최대 재시도 기간({MONTHLY_MAX_DAYS}일) 초과 — 데이터 미준비 또는 반복 실패. 수동 확인 필요.",
-                    state.attempts,
                 )
                 state.mark_give_up_notified()
                 log.info("  [STATE] 포기 알림 메일 발송 완료")
@@ -116,16 +117,24 @@ def run_monthly(config: Config, year: int, month: int, force: bool = False) -> N
         log.error(f"[FAIL] {year}-{month:02d} 오류: {reason}", exc_info=True)
         state.mark_failed()
         if state.should_give_up():
-            notify_failure(
-                config.notify.gmail_credentials_path,
-                config.notify.gmail_token_path,
-                config.notify.report_sender,
-                config.notify.report_recipients,
-                _month_label(year, month),
-                reason,
-                state.attempts,
-            )
+            _send_failure(config, state, year, month, reason)
         raise
+
+
+def _send_failure(config: Config, state, year: int, month: int, reason: str) -> None:
+    """실패 알림 메일(로그·스냅샷 첨부) + 구글 드라이브 업로드 (보조)."""
+    artifacts = collect_log_artifacts(config.runtime.logs_dir)
+    notify_failure(
+        config.notify.gmail_credentials_path,
+        config.notify.gmail_token_path,
+        config.notify.report_sender,
+        config.notify.report_recipients,
+        _month_label(year, month),
+        reason,
+        state.attempts,
+        attachments=artifacts,
+    )
+    upload_logs(config, f"monthly_{year}-{month:02d}", artifacts)
 
 
 def _month_label(year: int, month: int):

@@ -115,11 +115,12 @@ def _load_html_table_sheet(path: Path, raw: bytes) -> _WorksheetAdapter:
         v = v.replace(",", "").strip()
         if not v or v in ("\xa0", "."):  # SAS missing value "." → None
             return None
-        # 날짜 형식 시도
+        # 날짜 형식 시도 (유니코드 대시 정규화)
         from datetime import datetime as _dt
+        vd = _normalize_dashes(v)
         for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"):
             try:
-                return _dt.strptime(v, fmt).date()
+                return _dt.strptime(vd, fmt).date()
             except ValueError:
                 pass
         # 숫자 시도
@@ -193,6 +194,37 @@ def _header_row(ws) -> list[str]:
     return []
 
 
+def _normalize_dashes(s: str) -> str:
+    """유니코드 대시(−,–,—,‐)를 ASCII '-' 로 정규화. WRS 일마감 날짜가 U+2212 를 씀."""
+    if not s:
+        return s
+    return (
+        s.replace("−", "-")  # MINUS SIGN
+         .replace("–", "-")  # EN DASH
+         .replace("—", "-")  # EM DASH
+         .replace("‐", "-")  # HYPHEN
+    )
+
+
+def _parse_date_label(s: str) -> date | None:
+    """'2026-06-14' 등 날짜 라벨 문자열을 date 로 (대시 정규화 후)."""
+    from datetime import datetime as _dt
+    s = _normalize_dashes(str(s)).strip()
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y%m%d"):
+        try:
+            return _dt.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    import re as _re
+    m = _re.match(r"\s*(\d{4})\D+(\d{1,2})\D+(\d{1,2})", s)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+    return None
+
+
 def _to_num(val: Any) -> float | None:
     if val is None:
         return None
@@ -211,8 +243,8 @@ def _dates_match(cell_val: Any, target: date) -> bool:
         return cell_val.date() == target
     if isinstance(cell_val, date):
         return cell_val == target
-    # 문자열 형식 시도
-    s = str(cell_val).strip()
+    # 문자열 형식 시도 (유니코드 대시 정규화)
+    s = _normalize_dashes(str(cell_val)).strip()
     for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%m/%d/%Y"):
         try:
             return dt.strptime(s, fmt).date() == target
@@ -378,27 +410,50 @@ def parse_channel_metrics(path: Path, target_date: date) -> dict[str, Any]:
 
 # ── 리포트 3 파서 ─────────────────────────────────────────────────────
 
-def parse_closing_report(path: Path) -> dict[str, Any]:
-    """[HPC, POS] HPC 일마감(브랜드) → '0002. SPC전사(3사)' 행/열 추출.
+# 일마감 메트릭 이름 정규화 매핑 (공백 제거 헤더 → 대상 시트 컬럼명)
+CLOSING_METRIC_NORM: dict[str, str] = {
+    "POS총매출액": "POS 총매출액",
+    "POS영수증건수": "POS 영수증건수",
+    "POS거래점포수": "POS 거래점포수",
+    "HPC매출액": "HPC 매출액",
+    "HPC거래점포수": "HPC 거래점포수",
+    "HPC총적립액": "HPC 총적립액",
+    "HPC적립건수": "HPC 적립건수",
+    "객단가": "객단가",
+    "HPC총사용액": "HPC 총사용액",
+    "HPC사용건수": "HPC 사용건수",
+}
+
+
+class ClosingDateNotFoundError(ValueError):
+    """일마감 리포트에 target_date 열그룹이 없을 때 (데이터 미준비 가능)."""
+
+
+def parse_closing_report(path: Path, target_date: date) -> dict[str, Any]:
+    """[HPC, POS] HPC 일마감(브랜드) → '0002. SPC전사(3사)' 행, **target_date 열그룹** 추출.
+
+    일마감 리포트는 [대상일, 전일] 두 날짜를 나란히 보여준다(바깥 열차원 c0=날짜).
+    반드시 target_date 에 해당하는 c0 그룹의 값만 추출해야 전일 데이터 혼입을 막는다.
 
     파일 형식에 따라 자동 분기:
-    - .html : SAS WRS iFrame HTML (브랜드=행, 메트릭=열)
-    - .xlsx/.xls : OLAP Excel 다운로드
+    - .html : SAS WRS iFrame HTML (브랜드=행, 날짜=바깥열 c0, 메트릭=안쪽열 c1)
+    - .xlsx/.xls : OLAP Excel 다운로드 (구 방식)
     """
     if path.suffix.lower() == ".html":
-        return _parse_closing_report_html(path)
+        return _parse_closing_report_html(path, target_date)
     return _parse_closing_report_excel(path)
 
 
-def _parse_closing_report_html(path: Path) -> dict[str, Any]:
-    """SAS WRS HTML에서 0002.SPC전사(3사) 행 데이터 추출.
+def _parse_closing_report_html(path: Path, target_date: date) -> dict[str, Any]:
+    """SAS WRS HTML에서 0002.SPC전사(3사) 행 × target_date 열그룹 데이터 추출.
 
-    WRS OLAP 테이블 구조:
-    - 행 헤더 <th id="..._r1_N">: 브랜드명 (0002.SPC전사(3사) = r1_0)
-    - 데이터 <td headers="..._r1_0 ..._cM_N">: 해당 브랜드·컬럼 값
-    - 컬럼 헤더 <span id="..._c1_N_HL_label">: 메트릭명
+    WRS OLAP 테이블 구조 (셀의 headers 속성이 그룹을 명시):
+    - 행 헤더 r1_N: 브랜드명 (0002.SPC전사(3사) = r1_0)
+    - 바깥 컬럼 c0_N: 날짜 (예 c0_0=대상일, c0_10=전일) — <span id="..._c0_N_..label">날짜
+    - 안쪽 컬럼 c1_N: 메트릭명 — <span id="..._c1_N_..label">메트릭
+    - 데이터 <td headers="... r1_0 ... c0_K ... c1_M">: 해당 (브랜드,날짜,메트릭) 값
     """
-    log.info(f"[PARSE] WRS 일마감 HTML 파싱: {path.name}")
+    log.info(f"[PARSE] WRS 일마감 HTML 파싱: {path.name} (대상일 {target_date})")
     html = path.read_text(encoding="utf-8", errors="replace")
 
     # 테이블 ID prefix 탐색 (otvc{숫자}_otv)
@@ -406,76 +461,67 @@ def _parse_closing_report_html(path: Path) -> dict[str, Any]:
     if not m:
         raise ValueError(f"WRS 테이블 prefix 미발견: {path}")
     pfx = m.group(1)
-    brand_ref = f"{pfx}_r1_0"  # 0002.SPC전사(3사) 행의 헤더 ID
 
-    # 데이터 셀 탐색: headers 속성에 brand_ref 포함
+    # ── 바깥 컬럼(c0=날짜) 라벨 → date 매핑 ──────────────────────────
+    c0_pat = re.compile(
+        r'id="' + re.escape(pfx) + r'_c0_(\d+)_[^"]*label"[^>]*>([^<]+)</span>'
+    )
+    c0_dates: dict[int, date] = {}
+    for hm in c0_pat.finditer(html):
+        d = _parse_date_label(hm.group(2))
+        if d is not None:
+            c0_dates[int(hm.group(1))] = d
+
+    target_c0 = [idx for idx, d in c0_dates.items() if d == target_date]
+    if not target_c0:
+        raise ClosingDateNotFoundError(
+            f"일마감 리포트에 {target_date} 열그룹 없음 "
+            f"(존재 날짜: {sorted(set(c0_dates.values()))}) — 데이터 미준비 가능"
+        )
+    c0_idx = target_c0[0]
+    c0_tok = f"{pfx}_c0_{c0_idx}"
+    brand_tok = f"{pfx}_r1_0"  # 0002.SPC전사(3사)
+
+    # ── 안쪽 컬럼(c1=메트릭) 라벨 매핑 ───────────────────────────────
+    c1_pat = re.compile(
+        r'id="' + re.escape(pfx) + r'_c1_(\d+)_[^"]*label"[^>]*>([^<]+)</span>'
+    )
+    c1_labels: dict[int, str] = {}
+    for hm in c1_pat.finditer(html):
+        c1_labels[int(hm.group(1))] = hm.group(2).strip().replace(" ", "").replace("\xa0", "")
+
+    # ── 데이터 셀: headers 에 브랜드 r1_0 AND 대상 날짜 c0_idx 토큰을 모두 포함 ──
     cell_pat = re.compile(
-        r'<td\s+id="(' + re.escape(pfx) + r'_[^"]+_cr)"\s+headers="([^"]*'
-        + re.escape(brand_ref) + r'[^"]*)"[^>]*>([^<]*)</td>',
+        r'<td\s+id="' + re.escape(pfx) + r'_[^"]*_cr"\s+headers="([^"]*)"[^>]*>([^<]*)</td>',
         re.IGNORECASE,
     )
-    cells = cell_pat.findall(html)
-
-    if not cells:
-        raise ValueError(
-            f"0002.SPC전사(3사) 데이터 셀 미발견 ({path.name}). "
-            "CLOSING_BRAND_LABEL / WRS iFrame 구조를 확인하세요."
-        )
-
-    # 컬럼 인덱스 기준 정렬
-    def _col_idx(cell_id: str) -> int:
-        cm = re.search(r'_c(\d+)_cr$', cell_id)
-        return int(cm.group(1)) if cm else 999
-
-    cells_sorted = sorted(cells, key=lambda c: _col_idx(c[0]))
-    raw_values = [c[2].strip() for c in cells_sorted]
-
-    # 컬럼 헤더 탐색 (c1_N 레벨 — 안쪽 컬럼 헤더)
-    hdr_pat = re.compile(
-        r'<span[^>]+id="' + re.escape(pfx) + r'_c1_(\d+)_[^"]*label"[^>]*>([^<]+)</span>'
-    )
-    col_headers: dict[int, str] = {}
-    for hm in hdr_pat.finditer(html):
-        col_headers[int(hm.group(1))] = hm.group(2).strip().replace(" ", "").replace("\xa0", "")
-
-    # 메트릭 이름 정규화 매핑
-    METRIC_NORM: dict[str, str] = {
-        "POS총매출액": "POS 총매출액",
-        "POS영수증건수": "POS 영수증건수",
-        "POS거래점포수": "POS 거래점포수",
-        "HPC매출액": "HPC 매출액",
-        "HPC거래점포수": "HPC 거래점포수",
-        "HPC총적립액": "HPC 총적립액",
-        "HPC적립건수": "HPC 적립건수",
-        "객단가": "객단가",
-        "HPC총사용액": "HPC 총사용액",
-        "HPC사용건수": "HPC 사용건수",
-    }
+    c1_tok_pat = re.compile(re.escape(pfx) + r"_c1_(\d+)$")
 
     result: dict[str, Any] = {}
-    for cell_id, _, raw_val in cells_sorted:
-        ci = _col_idx(cell_id)
-        hdr_raw = col_headers.get(ci, "")
-        for src, dst in METRIC_NORM.items():
+    for hm in cell_pat.finditer(html):
+        tokens = hm.group(1).split()
+        if brand_tok not in tokens or c0_tok not in tokens:
+            continue  # 다른 브랜드 또는 다른 날짜 그룹 → 제외
+        c1_idx = None
+        for t in tokens:
+            cm = c1_tok_pat.match(t)
+            if cm:
+                c1_idx = int(cm.group(1))
+                break
+        if c1_idx is None:
+            continue
+        hdr_raw = c1_labels.get(c1_idx, "")
+        for src, dst in CLOSING_METRIC_NORM.items():
             if src in hdr_raw or dst.replace(" ", "") in hdr_raw:
-                result[dst] = _to_num(raw_val)
+                if dst not in result:  # 같은 그룹 내 첫 매칭 유지
+                    result[dst] = _to_num(hm.group(2).strip())
                 break
 
-    # fallback: 위치 기반 매핑 (헤더 미매핑 시)
-    POSITION_METRICS = [
-        "POS 총매출액", "POS 영수증건수", "POS 거래점포수",
-        "HPC 매출액", "HPC 거래점포수", "HPC 총적립액", "HPC 적립건수",
-        "객단가", "HPC 총사용액", "HPC 사용건수",
-    ]
-    if len(result) < 5 and len(raw_values) >= 10:
-        log.warning("  컬럼 헤더 매핑 실패 — 위치 기반 매핑으로 대체")
-        result = {m: _to_num(v) for m, v in zip(POSITION_METRICS, raw_values)}
-
-    missing = [m for m in POSITION_METRICS if m not in result]
+    missing = [v for v in CLOSING_METRIC_NORM.values() if v not in result]
     if missing:
-        log.warning(f"  미추출 항목: {missing}")
+        log.warning(f"  미추출 항목: {missing} (c0_idx={c0_idx}, 헤더 매핑 확인)")
 
-    log.info(f"  추출 결과 ({len(result)}개): {result}")
+    log.info(f"  추출 결과 ({len(result)}개, 날짜 {target_date}): {result}")
     return result
 
 

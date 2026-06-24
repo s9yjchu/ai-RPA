@@ -85,16 +85,53 @@ def check_spc_login() -> bool:
     return bool(env.get("SPCHUB_ID")) and bool(env.get("SPCHUB_PW"))
 
 
+def verify_spc_login(user_id: str, password: str) -> tuple[bool | None, str]:
+    """헤드리스로 SPC Hub 로그인을 실제 시도해 자격증명을 검증.
+
+    반환:
+      (True,  "")        — 로그인 성공
+      (False, 사유)       — 자격증명 오류(아이디/비밀번호 불일치 등)
+      (None,  사유)       — 검증 불가(네트워크/내부망 미접속/패키지 미설치 등)
+                            → 입력값은 보존하고 경고만 표시.
+    """
+    sys.path.insert(0, str(ROOT))
+    from types import SimpleNamespace
+
+    try:
+        from src.browser import BrowserSession
+        from src import hub_login
+    except Exception as exc:
+        return None, f"검증 모듈 로드 실패: {exc}"
+
+    env = _read_env()
+    base_url = env.get("SPCHUB_BASE_URL") or (
+        "https://hub.spc.co.kr/ekp/view/login/userLogin"
+    )
+    cfg = SimpleNamespace(
+        hub=SimpleNamespace(base_url=base_url, user_id=user_id, password=password)
+    )
+    debug_dir = ROOT / "logs" / "debug"
+
+    try:
+        with BrowserSession(headless=True, debug_dir=debug_dir) as session:
+            page = session.new_page()
+            hub_login.login_to_hub(page, cfg, session)
+        return True, ""
+    except RuntimeError as exc:
+        # login_to_hub 는 자격증명 실패 시 RuntimeError 를 던진다.
+        return False, str(exc)
+    except Exception as exc:
+        # 네트워크/내부망 미접속/브라우저 미설치 등 — 검증 불가로 처리.
+        return None, str(exc)
+
+
 def check_google_auth() -> bool:
     if not TOKEN_PATH.exists() or not CREDS_PATH.exists():
         return False
     try:
         from google.oauth2.credentials import Credentials
-        creds = Credentials.from_authorized_user_file(
-            str(TOKEN_PATH),
-            ["https://www.googleapis.com/auth/spreadsheets",
-             "https://www.googleapis.com/auth/gmail.send"],
-        )
+        # 스코프 미강제 로드 — 존재·유효성만 확인 (drive.file 강제 시 무관하게 통과/실패 방지).
+        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH))
         return creds is not None and (creds.valid or creds.refresh_token is not None)
     except Exception:
         return False
@@ -231,30 +268,68 @@ class SetupApp:
     def _open_spc_dialog(self):
         dlg = Toplevel(self.root)
         dlg.title("SPC 로그인 정보")
-        dlg.geometry("320x180")
+        dlg.geometry("360x220")
         dlg.resizable(False, False)
         dlg.grab_set()
 
         env = _read_env()
 
-        Label(dlg, text="SPC 아이디:", font=("맑은 고딕", 10)).place(x=20, y=30)
+        Label(dlg, text="SPC 아이디:", font=("맑은 고딕", 10)).place(x=20, y=24)
         id_var = StringVar(value=env.get("SPCHUB_ID", ""))
-        Entry(dlg, textvariable=id_var, width=24, font=("맑은 고딕", 10)).place(x=110, y=28)
+        Entry(dlg, textvariable=id_var, width=24, font=("맑은 고딕", 10)).place(x=110, y=22)
 
-        Label(dlg, text="비밀번호:", font=("맑은 고딕", 10)).place(x=20, y=70)
+        Label(dlg, text="비밀번호:", font=("맑은 고딕", 10)).place(x=20, y=64)
         pw_var = StringVar(value=env.get("SPCHUB_PW", ""))
-        Entry(dlg, textvariable=pw_var, show="●", width=24, font=("맑은 고딕", 10)).place(x=110, y=68)
+        Entry(dlg, textvariable=pw_var, show="●", width=24, font=("맑은 고딕", 10)).place(x=110, y=62)
+
+        status_lbl = Label(dlg, text="", font=("맑은 고딕", 9), wraplength=320, justify="left")
+        status_lbl.place(x=20, y=98)
+
+        save_btn = ttk.Button(dlg, text="저장 후 검증", width=12)
+        cancel_btn = ttk.Button(dlg, text="취소", command=dlg.destroy, width=10)
+        save_btn.place(x=110, y=175)
+        cancel_btn.place(x=220, y=175)
 
         def save():
-            if not id_var.get().strip() or not pw_var.get().strip():
+            uid, pw = id_var.get().strip(), pw_var.get().strip()
+            if not uid or not pw:
                 messagebox.showwarning("입력 오류", "아이디와 비밀번호를 모두 입력하세요.", parent=dlg)
                 return
-            _write_env({"SPCHUB_ID": id_var.get().strip(), "SPCHUB_PW": pw_var.get().strip()})
-            dlg.destroy()
-            self.refresh_status()
+            # 입력값은 먼저 저장(검증 불가여도 보존), 이어서 실제 로그인으로 검증.
+            _write_env({"SPCHUB_ID": uid, "SPCHUB_PW": pw})
+            save_btn.config(state="disabled")
+            cancel_btn.config(state="disabled")
+            status_lbl.config(text="⏳  실제 로그인으로 검증 중... (최대 1분)", fg="#e67e22")
+            dlg.update()
 
-        ttk.Button(dlg, text="저장", command=save, width=10).place(x=100, y=120)
-        ttk.Button(dlg, text="취소", command=dlg.destroy, width=10).place(x=200, y=120)
+            def verify_thread():
+                ok, reason = verify_spc_login(uid, pw)
+
+                def done():
+                    save_btn.config(state="normal")
+                    cancel_btn.config(state="normal")
+                    if ok is True:
+                        status_lbl.config(text="✅  로그인 성공 — 자격증명 확인됨", fg="#27ae60")
+                        dlg.after(700, lambda: [dlg.destroy(), self.refresh_status()])
+                    elif ok is False:
+                        status_lbl.config(
+                            text="❌  로그인 실패 — 아이디/비밀번호를 확인하고 다시 입력하세요.\n"
+                                 f"    ({reason[:120]})",
+                            fg="#e74c3c",
+                        )
+                    else:
+                        status_lbl.config(
+                            text="⚠  지금은 검증할 수 없습니다(네트워크/내부망 또는 브라우저 미설치).\n"
+                                 "    입력값은 저장되었습니다. 사내망에서 다시 확인하세요.",
+                            fg="#e67e22",
+                        )
+                        self.refresh_status()
+
+                dlg.after(0, done)
+
+            threading.Thread(target=verify_thread, daemon=True).start()
+
+        save_btn.config(command=save)
 
     # ── Google 인증 다이얼로그 ────────────────────────────────────────
 

@@ -11,6 +11,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# Google OAuth 스코프 단일 출처 — 모든 모듈(sheets_writer / notifier / log_uploader /
+# setup_gui)이 이 목록을 동일하게 사용해 token.json 동의 범위와 일치시킨다.
+# drive.file: 앱이 생성한 로그 폴더/파일에만 접근 (전체 드라이브 권한 아님).
+GOOGLE_OAUTH_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/drive.file",
+]
+
+
 def _get(name: str, default: str = "", required: bool = False) -> str:
     val = os.getenv(name, default)
     if required and not val:
@@ -60,6 +70,14 @@ class RuntimeConfig:
 
 
 @dataclass(frozen=True)
+class LoggingConfig:
+    # 실패 시 로그/스냅샷을 구글 드라이브 공유 폴더로 업로드할지 여부.
+    upload_drive: bool
+    # 업로드 폴더를 공유(reader)할 관리자 이메일. 미설정 시 REPORT_RECIPIENTS 첫 주소.
+    admin_email: str
+
+
+@dataclass(frozen=True)
 class LogReportConfig:
     base_url: str
 
@@ -88,6 +106,7 @@ class Config:
     sheets: SheetsConfig
     notify: NotifyConfig
     runtime: RuntimeConfig
+    logging: LoggingConfig
     gcp: GcpConfig
 
 
@@ -152,6 +171,10 @@ def load_config() -> Config:
             download_dir=Path(_get("DOWNLOAD_DIR", "./downloads")).resolve(),
             state_dir=Path(_get("STATE_DIR", "./state")).resolve(),
             logs_dir=Path(_get("LOGS_DIR", "./logs")).resolve(),
+        ),
+        logging=LoggingConfig(
+            upload_drive=_get_bool("LOG_UPLOAD_DRIVE", False),
+            admin_email=_get("LOG_ADMIN_EMAIL"),
         ),
         gcp=GcpConfig(
             project_id=_get("GCP_PROJECT_ID"),

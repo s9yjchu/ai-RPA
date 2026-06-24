@@ -24,19 +24,27 @@ def do_auth(email_hint: str = "") -> None:
     creds_path = Path("./credentials.json")
     token_path = Path("./token.json")
 
+    # 스코프 미강제 로드 — 기존 토큰의 부여 스코프로 다룬다.
     creds = None
     if token_path.exists():
-        creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+        creds = Credentials.from_authorized_user_file(str(token_path))
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
-            kwargs = {"port": 0}
-            if email_hint:
-                kwargs["login_hint"] = email_hint
-            creds = flow.run_local_server(**kwargs)
+    # 필요한 전체 스코프(sheets/gmail/drive)가 모두 부여돼 있는지 확인.
+    have = set(creds.scopes or []) if creds else set()
+    has_all_scopes = set(SCOPES) <= have
+
+    if creds and creds.valid and has_all_scopes:
+        pass  # 이미 전체 스코프로 유효 — 재동의 불필요
+    elif creds and creds.expired and creds.refresh_token and has_all_scopes:
+        creds.refresh(Request())  # 만료만 — refresh (부여 스코프 ⊇ 요청)
+        token_path.write_text(creds.to_json(), encoding="utf-8")
+    else:
+        # 토큰 없음/무효 또는 신규 스코프(drive.file) 미부여 → 전체 스코프로 재동의.
+        flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
+        kwargs = {"port": 0}
+        if email_hint:
+            kwargs["login_hint"] = email_hint
+        creds = flow.run_local_server(**kwargs)
         token_path.write_text(creds.to_json(), encoding="utf-8")
 
     print("[OK] Google 인증 완료")

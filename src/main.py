@@ -15,7 +15,7 @@ import sys
 from datetime import date, datetime, timezone, timedelta
 
 from .config import load_config
-from .daily_runner import run_daily, yesterday_kst
+from .daily_runner import run_backfill, run_daily, yesterday_kst
 from .logger import setup_logging
 from .monthly_runner import run_monthly
 
@@ -45,6 +45,10 @@ def main() -> int:
     p_monthly.add_argument("--month", type=int, help="대상 월 (기본: 이번 달)")
     p_monthly.add_argument("--force", action="store_true", help="이미 완료된 달도 재실행")
 
+    # backfill — 여러 날짜 일괄 처리 (빈 셀 채움 / 잘못 쓰인 값 교정)
+    p_bf = sub.add_parser("backfill", help="여러 날짜 일괄 백필 (당월 공백 또는 지정 월 전체)")
+    p_bf.add_argument("--month", help="YYYY-MM 전체 강제 재처리 (생략 시: 당월 공백만)")
+
     args = parser.parse_args()
 
     try:
@@ -65,6 +69,35 @@ def main() -> int:
             year  = args.year  or now.year
             month = args.month or now.month
             run_monthly(config, year=year, month=month, force=args.force)
+
+        elif args.mode == "backfill":
+            from datetime import timedelta
+
+            from .daily_runner import yesterday_kst
+            from .integrity import current_month_window, find_blank_dates
+            from .sheets_writer import open_spreadsheet
+
+            if args.month:
+                y, m = map(int, args.month.split("-"))
+                start = date(y, m, 1)
+                nxt = date(y + (m // 12), (m % 12) + 1, 1)
+                end = min(nxt - timedelta(days=1), yesterday_kst())
+                dates = []
+                d = start
+                while d <= end:
+                    dates.append(d)
+                    d += timedelta(days=1)
+                log.info(f"[BACKFILL] {args.month} 전체 {len(dates)}일 강제 재처리")
+            else:
+                sh = open_spreadsheet(
+                    config.sheets.credentials_path,
+                    config.sheets.token_path,
+                    config.sheets.spreadsheet_id,
+                )
+                s, e = current_month_window()
+                dates = sorted(find_blank_dates(sh, s, e))
+                log.info(f"[BACKFILL] 당월 공백 {len(dates)}일: {dates}")
+            run_backfill(config, dates, force=True)
 
     except SystemExit:
         raise
