@@ -99,10 +99,12 @@ ai-RPA/
     ├── olap_scraper.py        OLAP 자동화 (로그인·탐색·다운로드)
     ├── log_report_scraper.py  LOG REPORT 자동화 (월 로그인객수)
     ├── visual_report_scraper.py  VISUAL REPORT 자동화 (MAU Excel)
-    ├── excel_parser.py        다운로드 Excel/HTML 파싱 (4개 파서)
-    ├── sheets_writer.py       Google Sheets 쓰기 (일별·월별)
-    ├── notifier.py            Gmail 알림
-    ├── daily_runner.py        일별 업데이트 오케스트레이션
+    ├── excel_parser.py        다운로드 Excel/HTML 파싱 (4개 파서, 일마감은 날짜 열그룹 고정)
+    ├── sheets_writer.py       Google Sheets 쓰기 (일별·월별, 날짜 시리얼로 행 매칭)
+    ├── integrity.py           사전 무결성 점검 (공백 셀 탐지 + 중복 행 정리)
+    ├── notifier.py            Gmail 알림 (실패 시 로그·스냅샷 첨부)
+    ├── log_uploader.py        실패 로그 구글 드라이브 업로드 (보조, 선택)
+    ├── daily_runner.py        일별 업데이트 오케스트레이션 (+자동 백필) / run_backfill
     ├── monthly_runner.py      월별 업데이트 오케스트레이션
     ├── setup_helper.py        설치 헬퍼 (Google OAuth + 설정 검증, setup_user.bat 호출용)
     ├── setup_gui.py           tkinter 설정 마법사 (개발자용)
@@ -223,6 +225,19 @@ python -m src.main monthly --year 2026 --month 5 --force
 ### 수동 실행
 
 `run_rpa.bat` 을 더블클릭하거나 설정 마법사의 **[지금 실행]** 버튼을 클릭합니다.
+
+```bash
+python -m src.main daily                  # 어제 (+당월 공백 자동 백필)
+python -m src.main daily --date YYYY-MM-DD --force
+python -m src.main monthly                # 당월 월별
+python -m src.main backfill                # 당월 공백 날짜 일괄 채움
+python -m src.main backfill --month 2026-06   # 해당 월 전체 강제 재처리(값 교정)
+python -m src.integrity --blanks          # 공백(백필 대상) 날짜 점검
+python -m src.integrity --dedupe[ --apply]    # 중복 행 탐지 / 삭제(비가역)
+```
+
+> 일별 실행 성공 후 당월의 RPA 담당 빈 셀을 자동으로 채웁니다(실행당 최대 7일,
+> 여러 실행에 걸쳐 수렴). 잘못 기입된(공백 아님) 값 교정은 `backfill --month` 사용.
 
 ### 자동 실행 (Task Scheduler)
 
@@ -426,3 +441,10 @@ token.json          ← 최초 인증 후 생성됨
 - OLAP 서버는 평일 업무시간(09:00–18:00 KST)에만 접속 가능합니다
 - `DRY_RUN=1` 상태에서는 Sheets 쓰기와 메일 발송이 완전히 생략되며, `credentials.json` 없이도 실행됩니다
 - VISUAL REPORT 리포트 로딩에 최대 5~6분 소요됩니다 (정상)
+- **`.venv` 는 절대경로가 박혀 있어 이동·이름변경 시 깨집니다.** 폴더를 옮겼다면 `.venv` 를
+  삭제하고 `setup_user.bat`(또는 `python -m venv .venv` + 재설치)로 새로 만드세요. 옛 `.venv`
+  를 그대로 두면 `ModuleNotFoundError`(예: gspread) 가 발생합니다.
+- 시트 날짜 행은 staff 가 미리 생성하며 `일자`(B열)는 실제 날짜 시리얼입니다. RPA 는
+  시리얼로 행을 찾아 **기존 행을 갱신**합니다(중복 행 생성 안 함).
+- 일마감(매장실적) 리포트는 [대상일, 전일] 두 날짜를 함께 보여주므로, 파서는 **대상일
+  열그룹만** 추출합니다(전일 값 혼입 방지).

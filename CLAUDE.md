@@ -103,11 +103,17 @@ print('Done')
 "
 ```
 
+**주의(venv 이동 금지)**: `.venv` 에는 절대경로가 박혀 있어 폴더 이동·이름변경 시 깨진다.
+옛 `.venv` 가 남은 폴더에서 `run_rpa.bat` 실행 시 activate 가 옛 경로를 가리켜 시스템
+파이썬으로 폴백 → `ModuleNotFoundError`(gspread 등). 새 폴더에 새로 추출 후 setup 재실행할 것.
+
 ## Module Layout
 
 ```
 src/
-├── main.py                CLI argparse 진입점. daily / monthly 서브커맨드.
+├── main.py                CLI argparse 진입점. daily / monthly / backfill 서브커맨드.
+│                          ※ 함수 안에서 모듈 전역(yesterday_kst 등) 재 import 금지
+│                          (지역변수化 → 다른 분기 UnboundLocalError).
 ├── config.py              .env → 동결 dataclass (Config, OlapConfig, LogReportConfig,
 │                          VisualReportConfig, SheetsConfig, …).
 │                          load_config() 단일 함수로 전체 설정 반환.
